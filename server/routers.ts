@@ -2,10 +2,11 @@ import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, router } from "./_core/trpc";
+import { z } from "zod";
 
 export const appRouter = router({
-    // if you need to use socket.io, read and register route in server/_core/index.ts, all api should start with '/api/' so that the gateway can route correctly
   system: systemRouter,
+
   auth: router({
     me: publicProcedure.query(opts => opts.ctx.user),
     logout: publicProcedure.mutation(({ ctx }) => {
@@ -17,12 +18,45 @@ export const appRouter = router({
     }),
   }),
 
-  // TODO: add feature routers here, e.g.
-  // todo: router({
-  //   list: protectedProcedure.query(({ ctx }) =>
-  //     db.getUserTodos(ctx.user.id)
-  //   ),
-  // }),
+  books: router({
+    search: publicProcedure
+      .input(z.object({
+        keyword: z.string().optional(),
+        limit: z.number().optional().default(10),
+        after: z.string().optional(),
+      }))
+      .query(async ({ input }) => {
+        try {
+          const params = new URLSearchParams();
+          if (input.keyword) params.append('作品名', input.keyword);
+          params.append('limit', input.limit.toString());
+          if (input.after) params.append('after', input.after);
+          
+          const response = await fetch(`https://api.bungomail.com/v0/books?${params}`);
+          if (!response.ok) throw new Error(`API error: ${response.statusText}`);
+          return await response.json();
+        } catch (error) {
+          console.error('Books search error:', error);
+          throw error;
+        }
+      }),
+    
+    getDetail: publicProcedure
+      .input(z.object({
+        id: z.number(),
+      }))
+      .query(async ({ input }) => {
+        try {
+          const response = await fetch(`https://api.bungomail.com/v0/books/${input.id}`);
+          if (!response.ok) throw new Error(`API error: ${response.statusText}`);
+          return await response.json();
+        } catch (error) {
+          console.error('Book detail error:', error);
+          throw error;
+        }
+      }),
+  }),
 });
 
 export type AppRouter = typeof appRouter;
+
