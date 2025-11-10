@@ -4,7 +4,7 @@ import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, router } from "./_core/trpc";
 import { z } from "zod";
 
-// ダミーデータ
+// ダミーデータ（フォールバック用）
 const DUMMY_BOOKS = [
   {
     id: 1,
@@ -53,6 +53,54 @@ const DUMMY_BOOKS = [
   }
 ];
 
+// 青空文庫APIからデータを取得する関数
+async function fetchAozoraBooks(keyword: string = '', limit: number = 50) {
+  try {
+    // 青空文庫のAPIエンドポイント
+    const apiUrl = 'https://api.aozora.gr.jp/search';
+    
+    // クエリパラメータを構築
+    const params = new URLSearchParams();
+    if (keyword) {
+      params.append('q', keyword);
+    }
+    params.append('limit', Math.min(limit, 100).toString());
+    
+    const response = await fetch(`${apiUrl}?${params.toString()}`, {
+      headers: {
+        'Accept': 'application/json',
+        'User-Agent': 'AozoraReader/1.0'
+      }
+    });
+
+    if (!response.ok) {
+      console.warn(`Aozora API returned status ${response.status}, using dummy data`);
+      return DUMMY_BOOKS;
+    }
+
+    const data = await response.json();
+    
+    // APIレスポンスを標準形式に変換
+    if (Array.isArray(data)) {
+      return data.slice(0, limit).map((book: any) => ({
+        id: book.id || book.ndc_code || Math.random(),
+        title: book.title || 'Unknown',
+        author: book.author || 'Unknown',
+        description: book.description || book.summary || '',
+        year: book.release_date ? new Date(book.release_date).getFullYear() : null,
+        characterCount: book.character_count || 0,
+        textFileUrl: book.text_url || null
+      }));
+    }
+    
+    return DUMMY_BOOKS;
+  } catch (error) {
+    console.error('Failed to fetch from Aozora API:', error);
+    // APIエラーの場合はダミーデータを返す
+    return DUMMY_BOOKS;
+  }
+}
+
 export const appRouter = router({
   system: systemRouter,
 
@@ -76,20 +124,13 @@ export const appRouter = router({
       }))
       .query(async ({ input }) => {
         try {
-          // ダミーデータを使用
-          let books = DUMMY_BOOKS;
-          
-          if (input.keyword) {
-            books = books.filter(b => 
-              b.title.includes(input.keyword) || 
-              b.author.includes(input.keyword)
-            );
-          }
-          
-          return { books: books.slice(0, input.limit) };
+          // 実際の青空文庫APIからデータを取得
+          const books = await fetchAozoraBooks(input.keyword, input.limit);
+          return { books };
         } catch (error) {
           console.error('Books search error:', error);
-          return { books: [] };
+          // エラーの場合はダミーデータを返す
+          return { books: DUMMY_BOOKS.slice(0, input.limit) };
         }
       }),
     
@@ -99,11 +140,12 @@ export const appRouter = router({
       }))
       .query(async ({ input }) => {
         try {
-          const book = DUMMY_BOOKS.find(b => b.id === input.id);
+          const books = await fetchAozoraBooks('', 100);
+          const book = books.find(b => b.id === input.id);
           return book || null;
         } catch (error) {
           console.error('Book detail error:', error);
-          return null;
+          return DUMMY_BOOKS.find(b => b.id === input.id) || null;
         }
       }),
   }),
