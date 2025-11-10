@@ -4,8 +4,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Search, Book, Loader2, ArrowLeft, ChevronDown, X } from 'lucide-react';
-import { getAozoraBookList, extractTextFromZip, parseAozoraText } from '@/lib/aozora';
+import { Search, Book, Loader2, ArrowLeft, ChevronDown } from 'lucide-react';
+import { extractTextFromZip } from '@/lib/aozora';
 
 interface BookItem {
   id: number;
@@ -26,19 +26,19 @@ export default function BooksPage() {
   const [isSearching, setIsSearching] = useState(false);
   const [hoveredBook, setHoveredBook] = useState<BookItem | null>(null);
   const [popupPosition, setPopupPosition] = useState({ x: 0, y: 0 });
+  const [isInitialLoad, setIsInitialLoad] = useState(true);
+
+  // tRPCで初期書籍リストを取得
+  const booksQuery = trpc.books.search.useQuery({ keyword: '', limit: 50 }, { enabled: isInitialLoad });
 
   // 初期化時に青空文庫のリストを取得
   useEffect(() => {
-    const loadBooks = async () => {
-      try {
-        const books = await getAozoraBookList();
-        setSearchResults(books as BookItem[]);
-      } catch (error) {
-        console.error('Failed to load books:', error);
-      }
-    };
-    loadBooks();
-  }, []);
+    if (booksQuery.data && isInitialLoad) {
+      const books = (booksQuery.data as any).books || [];
+      setSearchResults(books as BookItem[]);
+      setIsInitialLoad(false);
+    }
+  }, [booksQuery.data, isInitialLoad]);
 
   // 本の検索処理
   const handleSearch = async (e: React.FormEvent) => {
@@ -47,13 +47,12 @@ export default function BooksPage() {
 
     setIsSearching(true);
     try {
-      const books = await getAozoraBookList();
-      const filtered = (books as BookItem[]).filter(
-        (book) =>
-          book.title.includes(searchKeyword) ||
-          book.author.includes(searchKeyword)
-      );
-      setSearchResults(filtered);
+      const result = await (trpc.books.search as any).query({ 
+        keyword: searchKeyword, 
+        limit: 50 
+      });
+      const books = (result as any).books || [];
+      setSearchResults(books as BookItem[]);
     } catch (error) {
       console.error('Search error:', error);
     } finally {
@@ -66,29 +65,27 @@ export default function BooksPage() {
     setContentLoading(true);
     try {
       if (book.textFileUrl) {
-        // ZIPファイルから抽出
         const content = await extractTextFromZip(book.textFileUrl);
         setBookContent(content);
       } else {
-        // サンプルテキストを表示
-        const sampleContent = `${book.title}\n著者: ${book.author}\n\nこの作品のテキストはまだ取得できません。`;
-        setBookContent(sampleContent);
+        setBookContent('この作品のテキストはまだ取得できません。');
       }
     } catch (error) {
       console.error('Failed to load book content:', error);
-      setBookContent(`エラー: 本の内容を読み込めませんでした。\n\n${book.title}\n著者: ${book.author}`);
+      setBookContent('テキストの読み込みに失敗しました。');
     } finally {
       setContentLoading(false);
     }
   };
 
-  const handleBookSelect = (book: BookItem) => {
+  // 本の選択処理
+  const handleBookSelect = async (book: BookItem) => {
     setSelectedBook(book);
-    loadBookContent(book);
+    await loadBookContent(book);
   };
 
-  // カード上でのマウス移動を追跡
-  const handleCardMouseMove = (e: React.MouseEvent<HTMLDivElement>, book: BookItem) => {
+  // カードのマウスムーブイベント
+  const handleCardMouseMove = (e: React.MouseEvent, book: BookItem) => {
     const rect = e.currentTarget.getBoundingClientRect();
     setPopupPosition({
       x: rect.right + 10,
@@ -97,6 +94,7 @@ export default function BooksPage() {
     setHoveredBook(book);
   };
 
+  // カードのマウスリーブイベント
   const handleCardMouseLeave = () => {
     setHoveredBook(null);
   };
@@ -186,13 +184,13 @@ export default function BooksPage() {
         ) : (
           // 検索結果ビュー
           <div>
-            {isSearching && (
+            {(isSearching || booksQuery.isLoading) && (
               <div className="flex justify-center items-center py-12">
                 <Loader2 className="w-6 h-6 animate-spin" />
               </div>
             )}
 
-            {!isSearching && searchResults.length > 0 && (
+            {!isSearching && !booksQuery.isLoading && searchResults.length > 0 && (
               <div>
                 <h2 className="text-2xl font-bold mb-6">
                   {searchKeyword ? `「${searchKeyword}」の検索結果` : '青空文庫の作品'}
@@ -297,7 +295,7 @@ export default function BooksPage() {
               </div>
             )}
 
-            {!isSearching && searchResults.length === 0 && searchKeyword && (
+            {!isSearching && !booksQuery.isLoading && searchResults.length === 0 && searchKeyword && (
               <div className="text-center py-12">
                 <Book className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
                 <p className="text-muted-foreground">
@@ -306,7 +304,7 @@ export default function BooksPage() {
               </div>
             )}
 
-            {!isSearching && searchResults.length === 0 && !searchKeyword && (
+            {!isSearching && !booksQuery.isLoading && searchResults.length === 0 && !searchKeyword && (
               <div className="text-center py-12">
                 <Book className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
                 <p className="text-muted-foreground">
@@ -320,4 +318,3 @@ export default function BooksPage() {
     </div>
   );
 }
-

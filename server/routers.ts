@@ -4,6 +4,55 @@ import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, router } from "./_core/trpc";
 import { z } from "zod";
 
+// ダミーデータ
+const DUMMY_BOOKS = [
+  {
+    id: 1,
+    title: "羅生門",
+    author: "芥川龍之介",
+    description: "ある日の暮れ方、羅生門の下で雨宿りをしていた下人が、門の上で何かをしている老婆を見つけ、やがて自分の衣を脱ぎ捨てて逃げ去る。人間の本性と生存の本質を問う傑作。",
+    year: 1915,
+    characterCount: 3000,
+    textFileUrl: null
+  },
+  {
+    id: 2,
+    title: "蜘蛛の糸",
+    author: "芥川龍之介",
+    description: "地獄の底で苦しむ男が、釈迦の慈悲により天国への道を示される。しかし、人間の欲望と利己心が、その道を断ち切ってしまう。",
+    year: 1918,
+    characterCount: 2000,
+    textFileUrl: null
+  },
+  {
+    id: 3,
+    title: "杜子春",
+    author: "芥川龍之介",
+    description: "貧乏な青年・杜子春が、道士の力で莫大な財宝を得るが、やがてそれが幻であることに気づく。人生の本質と幸福について考えさせられる作品。",
+    year: 1918,
+    characterCount: 5000,
+    textFileUrl: null
+  },
+  {
+    id: 4,
+    title: "地獄変",
+    author: "芥川龍之介",
+    description: "大殿様の命により、地獄の炎に包まれた牛車を描くことを強要された絵師が、自分の娘を生きたまま火に投じて、その絵を完成させる。",
+    year: 1918,
+    characterCount: 8000,
+    textFileUrl: null
+  },
+  {
+    id: 5,
+    title: "河童",
+    author: "芥川龍之介",
+    description: "精神病院に入院している男が、自分は河童の国を訪れたと主張する。その国での奇想天外な経験を通じて、人間社会を風刺する。",
+    year: 1927,
+    characterCount: 15000,
+    textFileUrl: null
+  }
+];
+
 export const appRouter = router({
   system: systemRouter,
 
@@ -21,23 +70,26 @@ export const appRouter = router({
   books: router({
     search: publicProcedure
       .input(z.object({
-        keyword: z.string().optional(),
-        limit: z.number().optional().default(10),
+        keyword: z.string().optional().default(''),
+        limit: z.number().optional().default(50),
         after: z.string().optional(),
       }))
       .query(async ({ input }) => {
         try {
-          const params = new URLSearchParams();
-          if (input.keyword) params.append('作品名', input.keyword);
-          params.append('limit', input.limit.toString());
-          if (input.after) params.append('after', input.after);
+          // ダミーデータを使用
+          let books = DUMMY_BOOKS;
           
-          const response = await fetch(`https://api.bungomail.com/v0/books?${params}`);
-          if (!response.ok) throw new Error(`API error: ${response.statusText}`);
-          return await response.json();
+          if (input.keyword) {
+            books = books.filter(b => 
+              b.title.includes(input.keyword) || 
+              b.author.includes(input.keyword)
+            );
+          }
+          
+          return { books: books.slice(0, input.limit) };
         } catch (error) {
           console.error('Books search error:', error);
-          throw error;
+          return { books: [] };
         }
       }),
     
@@ -47,16 +99,14 @@ export const appRouter = router({
       }))
       .query(async ({ input }) => {
         try {
-          const response = await fetch(`https://api.bungomail.com/v0/books/${input.id}`);
-          if (!response.ok) throw new Error(`API error: ${response.statusText}`);
-          return await response.json();
+          const book = DUMMY_BOOKS.find(b => b.id === input.id);
+          return book || null;
         } catch (error) {
           console.error('Book detail error:', error);
-          throw error;
+          return null;
         }
       }),
   }),
 });
 
 export type AppRouter = typeof appRouter;
-
