@@ -1,11 +1,10 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { trpc } from '@/lib/trpc';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Search, Book, Loader2, ArrowLeft } from 'lucide-react';
-import { extractTextFromZip } from '@/lib/aozora';
 
 interface BookItem {
   id: number;
@@ -20,13 +19,17 @@ interface BookItem {
 export default function BooksPage() {
   const [searchKeyword, setSearchKeyword] = useState('');
   const [selectedBook, setSelectedBook] = useState<BookItem | null>(null);
-  const [bookContent, setBookContent] = useState('');
-  const [contentLoading, setContentLoading] = useState(false);
   const [searchResults, setSearchResults] = useState<BookItem[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
+  const [selectedBookId, setSelectedBookId] = useState<number | null>(null);
 
   // tRPCで初期書籍リストを取得
   const booksQuery = trpc.books.search.useQuery({ keyword: '', limit: 50 });
+
+  // 選択された本のテキストを取得
+  const textQuery = trpc.books.getText.useQuery(
+    { id: selectedBookId! },
+    { enabled: selectedBookId !== null }
+  );
 
   // 初期化時に青空文庫のリストを取得
   useEffect(() => {
@@ -39,54 +42,21 @@ export default function BooksPage() {
   // 本の検索処理
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!searchKeyword.trim()) {
-      // キーワードが空の場合は全書籍を表示
-      const result = await (trpc.books.search as any).query({ 
-        keyword: '', 
-        limit: 50 
-      });
-      const books = (result as any).books || [];
-      setSearchResults(books as BookItem[]);
-      return;
-    }
-
-    setIsSearching(true);
-    try {
-      const result = await (trpc.books.search as any).query({ 
-        keyword: searchKeyword, 
-        limit: 50 
-      });
-      const books = (result as any).books || [];
-      setSearchResults(books as BookItem[]);
-    } catch (error) {
-      console.error('Search error:', error);
-    } finally {
-      setIsSearching(false);
-    }
-  };
-
-  // 本のテキストファイルを取得して表示
-  const loadBookContent = async (book: BookItem) => {
-    setContentLoading(true);
-    try {
-      if (book.textFileUrl) {
-        const content = await extractTextFromZip(book.textFileUrl);
-        setBookContent(content);
-      } else {
-        setBookContent('この作品のテキストはまだ取得できません。');
-      }
-    } catch (error) {
-      console.error('Failed to load book content:', error);
-      setBookContent('テキストの読み込みに失敗しました。');
-    } finally {
-      setContentLoading(false);
-    }
+    const keyword = searchKeyword.trim();
+    
+    // 既存のクエリをリセット
+    const utils = trpc.useUtils();
+    
+    // 新しいキーワードで検索
+    const result = await utils.books.search.fetch({ keyword, limit: 50 });
+    const books = (result as any).books || [];
+    setSearchResults(books as BookItem[]);
   };
 
   // 本の選択処理
-  const handleBookSelect = async (book: BookItem) => {
+  const handleBookSelect = (book: BookItem) => {
     setSelectedBook(book);
-    await loadBookContent(book);
+    setSelectedBookId(book.id);
   };
 
   if (selectedBook) {
@@ -99,7 +69,7 @@ export default function BooksPage() {
               variant="outline"
               onClick={() => {
                 setSelectedBook(null);
-                setBookContent('');
+                setSelectedBookId(null);
               }}
             >
               <ArrowLeft className="w-4 h-4 mr-2" />
@@ -138,16 +108,23 @@ export default function BooksPage() {
             <div className="lg:col-span-3">
               <Card className="min-h-[600px]">
                 <CardContent className="p-6 h-[600px] overflow-y-auto">
-                  {contentLoading ? (
+                  {textQuery.isLoading ? (
                     <div className="flex justify-center items-center h-full">
                       <div className="text-center">
                         <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4" />
                         <p className="text-muted-foreground">本の内容を読み込み中...</p>
                       </div>
                     </div>
+                  ) : textQuery.isError ? (
+                    <div className="text-center py-12">
+                      <p className="text-muted-foreground">テキストの読み込みに失敗しました。</p>
+                      <p className="text-xs text-muted-foreground mt-2">
+                        {textQuery.error?.message}
+                      </p>
+                    </div>
                   ) : (
                     <div className="whitespace-pre-wrap break-words font-serif text-sm leading-relaxed">
-                      {bookContent}
+                      {textQuery.data?.text || 'テキストが見つかりません。'}
                     </div>
                   )}
                 </CardContent>
@@ -171,10 +148,10 @@ export default function BooksPage() {
               value={searchKeyword}
               onChange={(e) => setSearchKeyword(e.target.value)}
               className="flex-1"
-              disabled={isSearching || booksQuery.isLoading}
+              disabled={booksQuery.isLoading}
             />
-            <Button type="submit" variant="default" disabled={isSearching || booksQuery.isLoading}>
-              {isSearching || booksQuery.isLoading ? (
+            <Button type="submit" variant="default" disabled={booksQuery.isLoading}>
+              {booksQuery.isLoading ? (
                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />
               ) : (
                 <Search className="w-4 h-4 mr-2" />

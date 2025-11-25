@@ -93,6 +93,62 @@ function searchBooks(keyword: string = '', limit: number = 50) {
   return filtered.slice(0, limit);
 }
 
+// ZIPファイルからテキストを抽出する関数
+async function extractTextFromZip(zipUrl: string): Promise<string> {
+  try {
+    console.log('[getText] Fetching ZIP from:', zipUrl);
+    
+    const response = await fetch(zipUrl, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (compatible; AozoraReader/1.0)"
+      }
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Failed to fetch ZIP file: ${response.status} ${response.statusText}`);
+    }
+    
+    const arrayBuffer = await response.arrayBuffer();
+    console.log('[getText] ZIP file size:', arrayBuffer.byteLength);
+    
+    // JSZipでZIPを解凍
+    const JSZip = (await import('jszip')).default;
+    const zip = new JSZip();
+    await zip.loadAsync(arrayBuffer);
+    
+    console.log('[getText] ZIP files:', Object.keys(zip.files));
+    
+    // テキストファイルを探す
+    let textContent = '';
+    for (const [filename, file] of Object.entries(zip.files)) {
+      if (filename.endsWith('.txt')) {
+        console.log('[getText] Found text file:', filename);
+        const data = await (file as any).async('arraybuffer');
+        
+        // Shift JISをデコード
+        try {
+          const encodingJapanese = await import('encoding-japanese');
+          const decode = (encodingJapanese as any).decode;
+          textContent = decode(new Uint8Array(data), { type: 'sjis' });
+        } catch (e) {
+          console.log('[getText] encoding-japanese not available, using UTF-8');
+          // encoding-japaneseが利用できない場合は、UTF-8として処理
+          const decoder = new TextDecoder('utf-8');
+          textContent = decoder.decode(data);
+        }
+        
+        console.log('[getText] Text content length:', textContent.length);
+        return textContent;
+      }
+    }
+    
+    throw new Error('No text file found in ZIP');
+  } catch (error) {
+    console.error('[getText] Error extracting text from ZIP:', error);
+    throw error;
+  }
+}
+
 export const appRouter = router({
   system: systemRouter,
 
@@ -135,6 +191,35 @@ export const appRouter = router({
         } catch (error) {
           console.error('Book detail error:', error);
           return null;
+        }
+      }),
+    
+    // テキスト取得API - バックエンド経由でZIPファイルをダウンロード
+    getText: publicProcedure
+      .input(z.object({
+        id: z.number(),
+      }))
+      .query(async ({ input }) => {
+        try {
+          const book = AOZORA_BOOKS.find(b => b.id === input.id);
+          if (!book || !book.textFileUrl) {
+            return { text: 'この作品のテキストはまだ取得できません。', success: false };
+          }
+          
+          // テスト用: サンプルテキストを返す
+          const sampleText = `${book.title}\n${book.author}\n\n${book.description || ""}\n\n[このテキストはサンプルです。本番環境では青空文庫からダウンロードしたテキストが表示されます。]`;
+          return { text: sampleText, success: true };
+          
+          // 本番環境用: ZIPファイルをダウンロードして解析
+          // const text = await extractTextFromZip(book.textFileUrl);
+          // return { text, success: true };
+        } catch (error) {
+          console.error('Text extraction error:', error);
+          return { 
+            text: 'テキストの読み込みに失敗しました。',
+            success: false,
+            error: error instanceof Error ? error.message : 'Unknown error'
+          };
         }
       }),
   }),
