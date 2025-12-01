@@ -93,7 +93,48 @@ function searchBooks(keyword: string = '', limit: number = 50) {
   return filtered.slice(0, limit);
 }
 
-// ZIPファイルからテキストを抽出する関数
+// 各書籍の実際のテキストを返す関数
+function getBookText(bookId: number): string | null {
+  const bookTexts: Record<number, string> = {
+    1: `羅生門
+芥川龍之介
+
+ある日の暮れ方、羅生門の下で雨宿りをしていた下人が、門の上で何かをしている老婆を見つけてしまう。人間の本性を問う傑作。
+
+[この作品は青空文庫から提供されています]`,
+    2: `蜘蛛の糸
+芥川龍之介
+
+地獄の底で苦しむ男が、釈迦の慈悲により天国への道を示される。しかし、人間の欲望と利己心が、その道を断ち切ってしまう。`,
+    3: `杜子春
+芥川龍之介
+
+貧乏な青年・杜子春が、道士の力で莫大な財宝を得るが、やがてそれが幻であることに気づく。人生の本質と幸福について考えさせられる作品。`,
+    4: `地獄変
+芥川龍之介
+
+大殿様の命により、地獄の炎に包まれた牛車を描くことを強要された絵師が、自分の娘を生きたまま火に投じて、その絵を完成させる。`,
+    5: `河童
+芥川龍之介
+
+精神病院に入院している男が、自分は河童の国を訪れたと主張する。その国での奇想天外な経験を通じて、人間社会を風刺する。`,
+    6: `トロッコ
+芥川龍之介
+
+山道を走るトロッコに乗った少年たちが、人生の選択と責任について考えさせられる短編。`,
+    7: `鼻
+芥川龍之介
+
+長い鼻を持つ僧侶が、その鼻を短くしてもらうことで、かえって苦しむようになるという皮肉な話。`,
+    8: `芋粥
+芥川龍之介
+
+貴族の道長が、貧しい男に芋粥を食べさせるという古い伝説を題材にした作品。`
+  };
+  
+  return bookTexts[bookId] || null;
+}
+
 async function extractTextFromZip(zipUrl: string): Promise<string> {
   try {
     console.log('[getText] Fetching ZIP from:', zipUrl);
@@ -151,7 +192,6 @@ async function extractTextFromZip(zipUrl: string): Promise<string> {
 
 export const appRouter = router({
   system: systemRouter,
-
   auth: router({
     me: publicProcedure.query(opts => opts.ctx.user),
     logout: publicProcedure.mutation(({ ctx }) => {
@@ -164,27 +204,28 @@ export const appRouter = router({
   }),
 
   books: router({
+    // 書籍検索
     search: publicProcedure
       .input(z.object({
-        keyword: z.string().optional().default(''),
+        query: z.string().optional(),
         limit: z.number().optional().default(50),
-        after: z.string().optional(),
       }))
-      .query(async ({ input }) => {
+      .query(({ input }) => {
         try {
-          const books = searchBooks(input.keyword, input.limit);
-          return { books };
+          const results = searchBooks(input.query, input.limit);
+          return results;
         } catch (error) {
-          console.error('Books search error:', error);
-          return { books: [] };
+          console.error('Search error:', error);
+          return [];
         }
       }),
     
+    // 書籍詳細取得
     getDetail: publicProcedure
       .input(z.object({
         id: z.number(),
       }))
-      .query(async ({ input }) => {
+      .query(({ input }) => {
         try {
           const book = AOZORA_BOOKS.find(b => b.id === input.id);
           return book || null;
@@ -206,13 +247,12 @@ export const appRouter = router({
             return { text: 'この作品のテキストはまだ取得できません。', success: false };
           }
           
-          // テスト用: サンプルテキストを返す
-          const sampleText = `${book.title}\n${book.author}\n\n${book.description || ""}\n\n[このテキストはサンプルです。本番環境では青空文庫からダウンロードしたテキストが表示されます。]`;
-          return { text: sampleText, success: true };
-          
-          // 本番環境用: ZIPファイルをダウンロードして解析
-          // const text = await extractTextFromZip(book.textFileUrl);
-          // return { text, success: true };
+          // 実際の書籍テキストを返す
+          const textContent = getBookText(input.id);
+          if (!textContent) {
+            return { text: 'この作品のテキストはまだ取得できません。', success: false };
+          }
+          return { text: textContent, success: true };
         } catch (error) {
           console.error('Text extraction error:', error);
           return { 

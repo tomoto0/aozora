@@ -23,7 +23,7 @@ export default function BooksPage() {
   const [selectedBookId, setSelectedBookId] = useState<number | null>(null);
 
   // tRPCで初期書籍リストを取得
-  const booksQuery = trpc.books.search.useQuery({ keyword: '', limit: 50 });
+  const booksQuery = trpc.books.search.useQuery({ query: '', limit: 50 });
 
   // 選択された本のテキストを取得
   const textQuery = trpc.books.getText.useQuery(
@@ -34,8 +34,8 @@ export default function BooksPage() {
   // 初期化時に青空文庫のリストを取得
   useEffect(() => {
     if (booksQuery.data) {
-      const books = (booksQuery.data as any).books || [];
-      setSearchResults(books as BookItem[]);
+      // booksQuery.dataは配列を直接返す
+      setSearchResults(booksQuery.data as BookItem[]);
     }
   }, [booksQuery.data]);
 
@@ -48,9 +48,9 @@ export default function BooksPage() {
     const utils = trpc.useUtils();
     
     // 新しいキーワードで検索
-    const result = await utils.books.search.fetch({ keyword, limit: 50 });
-    const books = (result as any).books || [];
-    setSearchResults(books as BookItem[]);
+    const result = await utils.books.search.fetch({ query: keyword, limit: 50 });
+    // resultは配列を直接返す
+    setSearchResults(result as BookItem[]);
   };
 
   // 本の選択処理
