@@ -170,10 +170,23 @@ async function extractTextFromZip(zipUrl: string): Promise<string> {
         try {
           const encodingJapanese = await import('encoding-japanese');
           const decode = (encodingJapanese as any).decode;
-          textContent = decode(new Uint8Array(data), { type: 'sjis' });
+          const decoded = decode(new Uint8Array(data), { type: 'sjis' });
+          
+          if (typeof decoded === 'string') {
+            textContent = decoded;
+          } else if (Array.isArray(decoded)) {
+            const chunkSize = 65536;
+            let result = '';
+            for (let i = 0; i < decoded.length; i += chunkSize) {
+              const chunk = decoded.slice(i, i + chunkSize);
+              result += String.fromCharCode(...chunk);
+            }
+            textContent = result;
+          } else {
+            textContent = String(decoded);
+          }
         } catch (e) {
-          console.log('[getText] encoding-japanese not available, using UTF-8');
-          // encoding-japaneseが利用できない場合は、UTF-8として処理
+          console.log('[getText] encoding-japanese decode error, trying UTF-8:', e);
           const decoder = new TextDecoder('utf-8');
           textContent = decoder.decode(data);
         }
