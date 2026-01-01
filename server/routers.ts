@@ -136,71 +136,101 @@ function getBookText(bookId: number): string | null {
 }
 
 async function extractTextFromZip(zipUrl: string): Promise<string> {
-  try {
-    console.log('[getText] Fetching ZIP from:', zipUrl);
-    
-    const response = await fetch(zipUrl, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (compatible; AozoraReader/1.0)"
-      }
-    });
-    
-    if (!response.ok) {
-      throw new Error(`Failed to fetch ZIP file: ${response.status} ${response.statusText}`);
-    }
-    
-    const arrayBuffer = await response.arrayBuffer();
-    console.log('[getText] ZIP file size:', arrayBuffer.byteLength);
-    
-    // JSZipでZIPを解凍
-    const JSZip = (await import('jszip')).default;
-    const zip = new JSZip();
-    await zip.loadAsync(arrayBuffer);
-    
-    console.log('[getText] ZIP files:', Object.keys(zip.files));
-    
-    // テキストファイルを探す
-    let textContent = '';
-    for (const [filename, file] of Object.entries(zip.files)) {
-      if (filename.endsWith('.txt')) {
-        console.log('[getText] Found text file:', filename);
-        const data = await (file as any).async('arraybuffer');
+  const maxRetries = 3;
+  let lastError: Error | null = null;
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      console.log(`[getText] Fetching ZIP from: ${zipUrl} (attempt ${attempt}/${maxRetries})`);
+      
+      const response = await fetch(zipUrl, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+          "Accept": "*/*",
+          "Accept-Encoding": "gzip, deflate, br",
+          "Connection": "keep-alive"
+        }
+      });
+      
+      if (!response.ok) {
+        const errorMsg = `HTTP ${response.status} ${response.statusText}`;
+        console.warn(`[getText] Failed to fetch ZIP: ${errorMsg}`);
+        lastError = new Error(`Failed to fetch ZIP file: ${errorMsg}`);
         
-        // Shift JISをデコード
-        try {
-          const encodingJapanese = await import('encoding-japanese');
-          const decode = (encodingJapanese as any).decode;
-          const decoded = decode(new Uint8Array(data), { type: 'sjis' });
-          
-          if (typeof decoded === 'string') {
-            textContent = decoded;
-          } else if (Array.isArray(decoded)) {
-            const chunkSize = 65536;
-            let result = '';
-            for (let i = 0; i < decoded.length; i += chunkSize) {
-              const chunk = decoded.slice(i, i + chunkSize);
-              result += String.fromCharCode(...chunk);
-            }
-            textContent = result;
-          } else {
-            textContent = String(decoded);
-          }
-        } catch (e) {
-          console.log('[getText] encoding-japanese decode error, trying UTF-8:', e);
-          const decoder = new TextDecoder('utf-8');
-          textContent = decoder.decode(data);
+        // 401, 403, 404は再試行しない
+        if ([401, 403, 404].includes(response.status)) {
+          throw lastError;
         }
         
-        console.log('[getText] Text content length:', textContent.length);
-        return textContent;
+        // その他のエラーは再試行
+        if (attempt < maxRetries) {
+          await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+          continue;
+        }
+        throw lastError;
       }
+      
+      const arrayBuffer = await response.arrayBuffer();
+      console.log('[getText] ZIP file size:', arrayBuffer.byteLength);
+      
+      // JSZipでZIPを解凍
+      const JSZip = (await import('jszip')).default;
+      const zip = new JSZip();
+      await zip.loadAsync(arrayBuffer);
+      
+      console.log('[getText] ZIP files:', Object.keys(zip.files));
+      
+      // テキストファイルを探す
+      let textContent = '';
+      for (const [filename, file] of Object.entries(zip.files)) {
+        if (filename.endsWith('.txt')) {
+          console.log('[getText] Found text file:', filename);
+          const data = await (file as any).async('arraybuffer');
+          
+          // Shift JISをデコード
+          try {
+            const encodingJapanese = await import('encoding-japanese');
+            const decode = (encodingJapanese as any).decode;
+            const decoded = decode(new Uint8Array(data), { type: 'sjis' });
+            
+            if (typeof decoded === 'string') {
+              textContent = decoded;
+            } else if (Array.isArray(decoded)) {
+              const chunkSize = 65536;
+              let result = '';
+              for (let i = 0; i < decoded.length; i += chunkSize) {
+                const chunk = decoded.slice(i, i + chunkSize);
+                result += String.fromCharCode(...chunk);
+              }
+              textContent = result;
+            } else {
+              textContent = String(decoded);
+            }
+          } catch (e) {
+            console.log('[getText] encoding-japanese decode error, trying UTF-8:', e);
+            const decoder = new TextDecoder('utf-8');
+            textContent = decoder.decode(data);
+          }
+          
+          console.log('[getText] Text content length:', textContent.length);
+          return textContent;
+        }
+      }
+      
+      throw new Error('No text file found in ZIP');
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      console.error(`[getText] Error extracting text from ZIP (attempt ${attempt}/${maxRetries}):`, lastError);
+      
+      if (attempt < maxRetries) {
+        await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+        continue;
+      }
+      throw lastError;
     }
-    
-    throw new Error('No text file found in ZIP');
-  } catch (error) {
-    console.error('[getText] Error extracting text from ZIP:', error);
-    throw error;
   }
+  
+  throw lastError || new Error('Failed to extract text from ZIP after retries');
 }
 
 export const appRouter = router({
