@@ -21,6 +21,7 @@ export default function BooksPage() {
   const [selectedBook, setSelectedBook] = useState<BookItem | null>(null);
   const [searchResults, setSearchResults] = useState<BookItem[]>([]);
   const [selectedBookId, setSelectedBookId] = useState<number | null>(null);
+  const [isSearching, setIsSearching] = useState(false);
 
   // tRPCで初期書籍リストを取得
   const booksQuery = trpc.books.search.useQuery({ query: '', limit: 50 });
@@ -44,13 +45,26 @@ export default function BooksPage() {
     e.preventDefault();
     const keyword = searchKeyword.trim();
     
-    // 既存のクエリをリセット
-    const utils = trpc.useUtils();
+    // 検索キーワードが空の場合は全表示
+    if (!keyword) {
+      if (booksQuery.data) {
+        setSearchResults(booksQuery.data as BookItem[]);
+      }
+      return;
+    }
     
-    // 新しいキーワードで検索
-    const result = await utils.books.search.fetch({ query: keyword, limit: 50 });
-    // resultは配列を直接返す
-    setSearchResults(result as BookItem[]);
+    // フロントエンド側でフィルタリング
+    setIsSearching(true);
+    try {
+      if (booksQuery.data) {
+        const filtered = (booksQuery.data as BookItem[]).filter(book =>
+          book.title.includes(keyword) || book.author.includes(keyword)
+        );
+        setSearchResults(filtered);
+      }
+    } finally {
+      setIsSearching(false);
+    }
   };
 
   // 本の選択処理
@@ -148,10 +162,10 @@ export default function BooksPage() {
               value={searchKeyword}
               onChange={(e) => setSearchKeyword(e.target.value)}
               className="flex-1"
-              disabled={booksQuery.isLoading}
+              disabled={booksQuery.isLoading || isSearching}
             />
-            <Button type="submit" variant="default" disabled={booksQuery.isLoading}>
-              {booksQuery.isLoading ? (
+            <Button type="submit" variant="default" disabled={booksQuery.isLoading || isSearching}>
+              {booksQuery.isLoading || isSearching ? (
                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />
               ) : (
                 <Search className="w-4 h-4 mr-2" />
