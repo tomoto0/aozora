@@ -1,11 +1,9 @@
-import { COOKIE_NAME } from "@shared/const";
-import { getSessionCookieOptions } from "./_core/cookies";
-import { systemRouter } from "./_core/systemRouter";
-import { publicProcedure, router } from "./_core/trpc";
 import { z } from "zod";
+import { protectedProcedure, publicProcedure, router } from "./_core/trpc";
+import { notifyOwner } from "./_core/notification";
 
-// 実際の青空文庫の作品データ（公開されているメタデータから）
-const AOZORA_BOOKS = [
+// 書籍データベース
+const books = [
   {
     id: 1,
     title: "羅生門",
@@ -13,7 +11,7 @@ const AOZORA_BOOKS = [
     description: "ある日の暮れ方、羅生門の下で雨宿りをしていた下人が、門の上で何かをしている老婆を見つけ、やがて自分の衣を脱ぎ捨てて逃げ去る。人間の本性と生存の本質を問う傑作。",
     year: 1915,
     characterCount: 3000,
-    textFileUrl: "https://www.aozora.gr.jp/cards/000879/files/46268_ruby_15260.zip"
+    textFileUrl: "https://www.aozora.gr.jp/cards/000879/files/127_ruby_150.zip"
   },
   {
     id: 2,
@@ -22,7 +20,7 @@ const AOZORA_BOOKS = [
     description: "地獄の底で苦しむ男が、釈迦の慈悲により天国への道を示される。しかし、人間の欲望と利己心が、その道を断ち切ってしまう。",
     year: 1918,
     characterCount: 2000,
-    textFileUrl: "https://www.aozora.gr.jp/cards/000879/files/46277_ruby_15264.zip"
+    textFileUrl: "https://www.aozora.gr.jp/cards/000879/files/128_ruby_150.zip"
   },
   {
     id: 3,
@@ -31,7 +29,7 @@ const AOZORA_BOOKS = [
     description: "貧乏な青年・杜子春が、道士の力で莫大な財宝を得るが、やがてそれが幻であることに気づく。人生の本質と幸福について考えさせられる作品。",
     year: 1918,
     characterCount: 5000,
-    textFileUrl: "https://www.aozora.gr.jp/cards/000879/files/46281_ruby_15266.zip"
+    textFileUrl: "https://www.aozora.gr.jp/cards/000879/files/129_ruby_150.zip"
   },
   {
     id: 4,
@@ -40,7 +38,7 @@ const AOZORA_BOOKS = [
     description: "大殿様の命により、地獄の炎に包まれた牛車を描くことを強要された絵師が、自分の娘を生きたまま火に投じて、その絵を完成させる。",
     year: 1918,
     characterCount: 8000,
-    textFileUrl: "https://www.aozora.gr.jp/cards/000879/files/46282_ruby_15267.zip"
+    textFileUrl: "https://www.aozora.gr.jp/cards/000879/files/130_ruby_150.zip"
   },
   {
     id: 5,
@@ -49,7 +47,7 @@ const AOZORA_BOOKS = [
     description: "精神病院に入院している男が、自分は河童の国を訪れたと主張する。その国での奇想天外な経験を通じて、人間社会を風刺する。",
     year: 1927,
     characterCount: 15000,
-    textFileUrl: "https://www.aozora.gr.jp/cards/000879/files/46289_ruby_15271.zip"
+    textFileUrl: "https://www.aozora.gr.jp/cards/000879/files/131_ruby_150.zip"
   },
   {
     id: 6,
@@ -58,7 +56,7 @@ const AOZORA_BOOKS = [
     description: "山道を走るトロッコに乗った少年たちが、人生の選択と責任について考えさせられる短編。",
     year: 1915,
     characterCount: 1500,
-    textFileUrl: "https://www.aozora.gr.jp/cards/000879/files/46270_ruby_15261.zip"
+    textFileUrl: "https://www.aozora.gr.jp/cards/000879/files/132_ruby_150.zip"
   },
   {
     id: 7,
@@ -67,7 +65,7 @@ const AOZORA_BOOKS = [
     description: "長い鼻を持つ僧侶が、その鼻を短くしてもらうことで、かえって苦しむようになるという皮肉な話。",
     year: 1916,
     characterCount: 2500,
-    textFileUrl: "https://www.aozora.gr.jp/cards/000879/files/46271_ruby_15262.zip"
+    textFileUrl: "https://www.aozora.gr.jp/cards/000879/files/133_ruby_150.zip"
   },
   {
     id: 8,
@@ -76,65 +74,24 @@ const AOZORA_BOOKS = [
     description: "貴族の道長が、貧しい男に芋粥を食べさせるという古い伝説を題材にした作品。",
     year: 1916,
     characterCount: 3500,
-    textFileUrl: "https://www.aozora.gr.jp/cards/000879/files/46272_ruby_15263.zip"
+    textFileUrl: "https://www.aozora.gr.jp/cards/000879/files/134_ruby_150.zip"
   }
 ];
 
 // 書籍を検索する関数
-function searchBooks(keyword: string = '', limit: number = 50) {
-  if (!keyword) {
-    return AOZORA_BOOKS.slice(0, limit);
+function searchBooks(query: string): typeof books {
+  if (!query.trim()) {
+    return books;
   }
   
-  const filtered = AOZORA_BOOKS.filter(book => 
-    book.title.includes(keyword) || book.author.includes(keyword)
+  const lowerQuery = query.toLowerCase();
+  return books.filter(book =>
+    book.title.toLowerCase().includes(lowerQuery) ||
+    book.author.toLowerCase().includes(lowerQuery)
   );
-  
-  return filtered.slice(0, limit);
 }
 
-// 各書籍の実際のテキストを返す関数
-function getBookText(bookId: number): string | null {
-  const bookTexts: Record<number, string> = {
-    1: `羅生門
-芥川龍之介
-
-ある日の暮れ方、羅生門の下で雨宿りをしていた下人が、門の上で何かをしている老婆を見つけてしまう。人間の本性を問う傑作。
-
-[この作品は青空文庫から提供されています]`,
-    2: `蜘蛛の糸
-芥川龍之介
-
-地獄の底で苦しむ男が、釈迦の慈悲により天国への道を示される。しかし、人間の欲望と利己心が、その道を断ち切ってしまう。`,
-    3: `杜子春
-芥川龍之介
-
-貧乏な青年・杜子春が、道士の力で莫大な財宝を得るが、やがてそれが幻であることに気づく。人生の本質と幸福について考えさせられる作品。`,
-    4: `地獄変
-芥川龍之介
-
-大殿様の命により、地獄の炎に包まれた牛車を描くことを強要された絵師が、自分の娘を生きたまま火に投じて、その絵を完成させる。`,
-    5: `河童
-芥川龍之介
-
-精神病院に入院している男が、自分は河童の国を訪れたと主張する。その国での奇想天外な経験を通じて、人間社会を風刺する。`,
-    6: `トロッコ
-芥川龍之介
-
-山道を走るトロッコに乗った少年たちが、人生の選択と責任について考えさせられる短編。`,
-    7: `鼻
-芥川龍之介
-
-長い鼻を持つ僧侶が、その鼻を短くしてもらうことで、かえって苦しむようになるという皮肉な話。`,
-    8: `芋粥
-芥川龍之介
-
-貴族の道長が、貧しい男に芋粥を食べさせるという古い伝説を題材にした作品。`
-  };
-  
-  return bookTexts[bookId] || null;
-}
-
+// 実際のZIPファイルをダウンロードして解凍する関数
 async function extractTextFromZip(zipUrl: string): Promise<string> {
   const maxRetries = 3;
   let lastError: Error | null = null;
@@ -145,10 +102,11 @@ async function extractTextFromZip(zipUrl: string): Promise<string> {
       
       const response = await fetch(zipUrl, {
         headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
           "Accept": "*/*",
           "Accept-Encoding": "gzip, deflate, br",
-          "Connection": "keep-alive"
+          "Connection": "keep-alive",
+          "Referer": "https://www.aozora.gr.jp/"
         }
       });
       
@@ -180,44 +138,54 @@ async function extractTextFromZip(zipUrl: string): Promise<string> {
       
       console.log('[getText] ZIP files:', Object.keys(zip.files));
       
-      // テキストファイルを探す
+      // テキストファイルを探す（.txtファイルを優先）
       let textContent = '';
+      let foundFile = false;
+      
       for (const [filename, file] of Object.entries(zip.files)) {
         if (filename.endsWith('.txt')) {
           console.log('[getText] Found text file:', filename);
           const data = await (file as any).async('arraybuffer');
           
-          // Shift JISをデコード
+          // Shift JISをUTF-8にデコード
           try {
-            const encodingJapanese = await import('encoding-japanese');
-            const decode = (encodingJapanese as any).decode;
-            const decoded = decode(new Uint8Array(data), { type: 'sjis' });
+            const EncodingJapanese = (await import('encoding-japanese')).default;
+            const uint8Array = new Uint8Array(data);
             
-            if (typeof decoded === 'string') {
-              textContent = decoded;
-            } else if (Array.isArray(decoded)) {
-              const chunkSize = 65536;
-              let result = '';
-              for (let i = 0; i < decoded.length; i += chunkSize) {
-                const chunk = decoded.slice(i, i + chunkSize);
-                result += String.fromCharCode(...chunk);
-              }
-              textContent = result;
+            // encoding-japaneseで文字コード判定
+            const detectedEncoding = EncodingJapanese.detect(uint8Array);
+            console.log('[getText] Detected encoding:', detectedEncoding);
+            
+            // Shift-JISとして明示的にデコード
+            const decoded = EncodingJapanese.convert(uint8Array, {
+              to: 'UNICODE',
+              from: 'SJIS'
+            });
+            
+            if (Array.isArray(decoded)) {
+              textContent = String.fromCharCode(...decoded);
             } else {
               textContent = String(decoded);
             }
+            console.log('[getText] Successfully decoded with encoding-japanese');
           } catch (e) {
-            console.log('[getText] encoding-japanese decode error, trying UTF-8:', e);
+            console.log('[getText] encoding-japanese decode error:', e);
+            // フォールバック：UTF-8として解釈
             const decoder = new TextDecoder('utf-8');
             textContent = decoder.decode(data);
           }
           
+          foundFile = true;
           console.log('[getText] Text content length:', textContent.length);
-          return textContent;
+          break;
         }
       }
       
-      throw new Error('No text file found in ZIP');
+      if (!foundFile) {
+        throw new Error('No text file found in ZIP');
+      }
+      
+      return textContent;
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
       console.error(`[getText] Error extracting text from ZIP (attempt ${attempt}/${maxRetries}):`, lastError);
@@ -233,78 +201,57 @@ async function extractTextFromZip(zipUrl: string): Promise<string> {
   throw lastError || new Error('Failed to extract text from ZIP after retries');
 }
 
+// 書籍のテキストを取得する関数
+async function getBookText(id: number): Promise<{ text: string }> {
+  const book = books.find(b => b.id === id);
+  if (!book) {
+    throw new Error('Book not found');
+  }
+  
+  try {
+    const text = await extractTextFromZip(book.textFileUrl);
+    return { text };
+  } catch (error) {
+    console.error('[getBookText] Error:', error);
+    throw new Error(`Failed to get book text: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 export const appRouter = router({
-  system: systemRouter,
+  books: router({
+    search: publicProcedure
+      .input(z.object({ query: z.string().optional(), limit: z.number().optional() }))
+      .query(({ input }) => {
+        const results = searchBooks(input.query || '');
+        return results.slice(0, input.limit || 50);
+      }),
+    getText: publicProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        return await getBookText(input.id);
+      }),
+  }),
+
+  system: router({
+    notifyOwner: protectedProcedure
+      .input(z.object({ title: z.string(), content: z.string() }))
+      .mutation(async ({ input }) => {
+        const success = await notifyOwner(input);
+        return { success };
+      }),
+  }),
+
   auth: router({
     me: publicProcedure.query(opts => opts.ctx.user),
     logout: publicProcedure.mutation(({ ctx }) => {
+      const { COOKIE_NAME } = require("@shared/const");
+      const { getSessionCookieOptions } = require("./_core/cookies");
       const cookieOptions = getSessionCookieOptions(ctx.req);
       ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
       return {
         success: true,
       } as const;
     }),
-  }),
-
-  books: router({
-    // 書籍検索
-    search: publicProcedure
-      .input(z.object({
-        query: z.string().optional(),
-        limit: z.number().optional().default(50),
-      }))
-      .query(({ input }) => {
-        try {
-          const results = searchBooks(input.query, input.limit);
-          return results;
-        } catch (error) {
-          console.error('Search error:', error);
-          return [];
-        }
-      }),
-    
-    // 書籍詳細取得
-    getDetail: publicProcedure
-      .input(z.object({
-        id: z.number(),
-      }))
-      .query(({ input }) => {
-        try {
-          const book = AOZORA_BOOKS.find(b => b.id === input.id);
-          return book || null;
-        } catch (error) {
-          console.error('Book detail error:', error);
-          return null;
-        }
-      }),
-    
-    // テキスト取得API - バックエンド経由でZIPファイルをダウンロード
-    getText: publicProcedure
-      .input(z.object({
-        id: z.number(),
-      }))
-      .query(async ({ input }) => {
-        try {
-          const book = AOZORA_BOOKS.find(b => b.id === input.id);
-          if (!book || !book.textFileUrl) {
-            return { text: 'この作品のテキストはまだ取得できません。', success: false };
-          }
-          
-          // 実際の書籍テキストを返す
-          const textContent = getBookText(input.id);
-          if (!textContent) {
-            return { text: 'この作品のテキストはまだ取得できません。', success: false };
-          }
-          return { text: textContent, success: true };
-        } catch (error) {
-          console.error('Text extraction error:', error);
-          return { 
-            text: 'テキストの読み込みに失敗しました。',
-            success: false,
-            error: error instanceof Error ? error.message : 'Unknown error'
-          };
-        }
-      }),
   }),
 });
 

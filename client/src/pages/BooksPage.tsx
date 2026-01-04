@@ -21,7 +21,6 @@ export default function BooksPage() {
   const [selectedBook, setSelectedBook] = useState<BookItem | null>(null);
   const [searchResults, setSearchResults] = useState<BookItem[]>([]);
   const [selectedBookId, setSelectedBookId] = useState<number | null>(null);
-  const [isSearching, setIsSearching] = useState(false);
 
   // tRPCで初期書籍リストを取得
   const booksQuery = trpc.books.search.useQuery({ query: '', limit: 50 });
@@ -35,35 +34,21 @@ export default function BooksPage() {
   // 初期化時に青空文庫のリストを取得
   useEffect(() => {
     if (booksQuery.data) {
-      // booksQuery.dataは配列を直接返す
       setSearchResults(booksQuery.data as BookItem[]);
     }
   }, [booksQuery.data]);
 
   // 本の検索処理
-  const handleSearch = async (e: React.FormEvent) => {
+  const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     const keyword = searchKeyword.trim();
     
-    // 検索キーワードが空の場合は全表示
-    if (!keyword) {
-      if (booksQuery.data) {
-        setSearchResults(booksQuery.data as BookItem[]);
-      }
-      return;
-    }
-    
     // フロントエンド側でフィルタリング
-    setIsSearching(true);
-    try {
-      if (booksQuery.data) {
-        const filtered = (booksQuery.data as BookItem[]).filter(book =>
-          book.title.includes(keyword) || book.author.includes(keyword)
-        );
-        setSearchResults(filtered);
-      }
-    } finally {
-      setIsSearching(false);
+    if (booksQuery.data) {
+      const filtered = (booksQuery.data as BookItem[]).filter(book =>
+        book.title.includes(keyword) || book.author.includes(keyword)
+      );
+      setSearchResults(filtered);
     }
   };
 
@@ -162,10 +147,10 @@ export default function BooksPage() {
               value={searchKeyword}
               onChange={(e) => setSearchKeyword(e.target.value)}
               className="flex-1"
-              disabled={booksQuery.isLoading || isSearching}
+              disabled={booksQuery.isLoading}
             />
-            <Button type="submit" variant="default" disabled={booksQuery.isLoading || isSearching}>
-              {booksQuery.isLoading || isSearching ? (
+            <Button type="submit" variant="default" disabled={booksQuery.isLoading}>
+              {booksQuery.isLoading ? (
                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />
               ) : (
                 <Search className="w-4 h-4 mr-2" />
