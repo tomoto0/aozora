@@ -1,13 +1,13 @@
-import React, { useState, useEffect } from 'react';
-import { trpc } from '@/lib/trpc';
+import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Search, Book, Loader2, ArrowLeft } from 'lucide-react';
+import { trpc } from '@/lib/trpc';
 
 interface BookItem {
-  id: number;
+  id: string;
   title: string;
   author: string;
   description?: string;
@@ -20,42 +20,55 @@ export default function BooksPage() {
   const [searchKeyword, setSearchKeyword] = useState('');
   const [selectedBook, setSelectedBook] = useState<BookItem | null>(null);
   const [searchResults, setSearchResults] = useState<BookItem[]>([]);
-  const [selectedBookId, setSelectedBookId] = useState<number | null>(null);
+  const [textContent, setTextContent] = useState<string>('');
+  const [isSearching, setIsSearching] = useState(false);
+  const [isLoadingText, setIsLoadingText] = useState(false);
+  const [textError, setTextError] = useState<string>('');
 
-  // tRPCで初期書籍リストを取得
-  const booksQuery = trpc.books.search.useQuery({ query: '', limit: 50 });
-
-  // 選択された本のテキストを取得
-  const textQuery = trpc.books.getText.useQuery(
-    { id: selectedBookId! },
-    { enabled: selectedBookId !== null }
-  );
-
-  // 初期化時に青空文庫のリストを取得
-  useEffect(() => {
-    if (booksQuery.data) {
-      setSearchResults(booksQuery.data as BookItem[]);
-    }
-  }, [booksQuery.data]);
+  const utils = trpc.useUtils();
 
   // 本の検索処理
-  const handleSearch = (e: React.FormEvent) => {
+  const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     const keyword = searchKeyword.trim();
     
-    // フロントエンド側でフィルタリング
-    if (booksQuery.data) {
-      const filtered = (booksQuery.data as BookItem[]).filter(book =>
-        book.title.includes(keyword) || book.author.includes(keyword)
-      );
-      setSearchResults(filtered);
+    if (!keyword) {
+      setSearchResults([]);
+      return;
+    }
+
+    setIsSearching(true);
+    try {
+      const results = await utils.books.search.fetch({ query: keyword, limit: 50 });
+      setSearchResults(results as BookItem[]);
+    } catch (error) {
+      console.error('Search error:', error);
+      setSearchResults([]);
+    } finally {
+      setIsSearching(false);
     }
   };
 
   // 本の選択処理
-  const handleBookSelect = (book: BookItem) => {
+  const handleBookSelect = async (book: BookItem) => {
     setSelectedBook(book);
-    setSelectedBookId(book.id);
+    setTextContent('');
+    setTextError('');
+    setIsLoadingText(true);
+
+    try {
+      const result = await utils.books.getText.fetch({ id: book.id });
+      if (result && result.text) {
+        setTextContent(result.text);
+      } else {
+        setTextError('テキストの読み込みに失敗しました');
+      }
+    } catch (error) {
+      console.error('Text loading error:', error);
+      setTextError(`テキストの読み込みに失敗しました: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setIsLoadingText(false);
+    }
   };
 
   if (selectedBook) {
@@ -68,7 +81,8 @@ export default function BooksPage() {
               variant="outline"
               onClick={() => {
                 setSelectedBook(null);
-                setSelectedBookId(null);
+                setTextContent('');
+                setTextError('');
               }}
             >
               <ArrowLeft className="w-4 h-4 mr-2" />
@@ -78,53 +92,53 @@ export default function BooksPage() {
         </div>
 
         <div className="container mx-auto px-4 py-6">
-          <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-            {/* 本の詳細情報 */}
-            <div className="lg:col-span-1">
-              <Card className="sticky top-24">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+            {/* 左側：書籍情報 */}
+            <div className="md:col-span-1">
+              <Card>
                 <CardHeader>
-                  <CardTitle className="text-lg line-clamp-3">{selectedBook.title}</CardTitle>
-                  <CardDescription className="mt-2">{selectedBook.author}</CardDescription>
+                  <CardTitle className="text-lg">{selectedBook.title}</CardTitle>
+                  <CardDescription>{selectedBook.author}</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  {selectedBook.year && (
-                    <div>
-                      <p className="text-xs font-semibold text-muted-foreground">出版年</p>
-                      <p className="text-sm">{selectedBook.year}</p>
-                    </div>
-                  )}
-                  {selectedBook.characterCount && (
-                    <div>
-                      <p className="text-xs font-semibold text-muted-foreground">文字数</p>
-                      <p className="text-sm">{selectedBook.characterCount.toLocaleString()}</p>
-                    </div>
-                  )}
+                  <div>
+                    <p className="text-sm text-muted-foreground">出版年</p>
+                    <p className="font-semibold">{selectedBook.year || 'N/A'}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">文字数</p>
+                    <p className="font-semibold">{selectedBook.characterCount?.toLocaleString() || 'N/A'}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">説明</p>
+                    <p className="text-sm mt-2">{selectedBook.description}</p>
+                  </div>
                 </CardContent>
               </Card>
             </div>
 
-            {/* 本の内容表示 */}
-            <div className="lg:col-span-3">
-              <Card className="min-h-[600px]">
-                <CardContent className="p-6 h-[600px] overflow-y-auto">
-                  {textQuery.isLoading ? (
-                    <div className="flex justify-center items-center h-full">
-                      <div className="text-center">
-                        <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4" />
-                        <p className="text-muted-foreground">本の内容を読み込み中...</p>
-                      </div>
+            {/* 右側：テキスト表示 */}
+            <div className="md:col-span-3">
+              <Card className="h-full">
+                <CardHeader>
+                  <CardTitle>{selectedBook.title}</CardTitle>
+                </CardHeader>
+                <CardContent className="h-96 overflow-y-auto">
+                  {isLoadingText ? (
+                    <div className="flex items-center justify-center h-full">
+                      <Loader2 className="w-8 h-8 animate-spin" />
                     </div>
-                  ) : textQuery.isError ? (
-                    <div className="text-center py-12">
-                      <p className="text-muted-foreground">テキストの読み込みに失敗しました。</p>
-                      <p className="text-xs text-muted-foreground mt-2">
-                        {textQuery.error?.message}
-                      </p>
+                  ) : textError ? (
+                    <div className="text-red-500">
+                      <p>エラーが発生しました</p>
+                      <p className="text-sm">{textError}</p>
+                    </div>
+                  ) : textContent ? (
+                    <div className="whitespace-pre-wrap text-sm leading-relaxed">
+                      {textContent}
                     </div>
                   ) : (
-                    <div className="whitespace-pre-wrap break-words font-serif text-sm leading-relaxed">
-                      {textQuery.data?.text || 'テキストが見つかりません。'}
-                    </div>
+                    <p>テキストを読み込み中...</p>
                   )}
                 </CardContent>
               </Card>
@@ -135,108 +149,84 @@ export default function BooksPage() {
     );
   }
 
-  // 検索結果ビュー
+  // 書籍検索ビュー
   return (
     <div className="min-h-screen bg-background">
-      {/* 検索ヘッダー */}
-      <div className="sticky top-0 z-50 bg-background border-b shadow-sm">
-        <div className="container mx-auto px-4 py-4">
-          <form onSubmit={handleSearch} className="flex gap-2">
+      <div className="container mx-auto px-4 py-8">
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold mb-2">青空文庫の作品</h1>
+          <p className="text-muted-foreground">作品名や著者名で検索して、快適な読書体験を楽しみましょう</p>
+        </div>
+
+        {/* 検索フォーム */}
+        <form onSubmit={handleSearch} className="mb-8">
+          <div className="flex gap-2">
             <Input
               placeholder="作品名や著者名で検索..."
               value={searchKeyword}
               onChange={(e) => setSearchKeyword(e.target.value)}
               className="flex-1"
-              disabled={booksQuery.isLoading}
             />
-            <Button type="submit" variant="default" disabled={booksQuery.isLoading}>
-              {booksQuery.isLoading ? (
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+            <Button type="submit" disabled={isSearching}>
+              {isSearching ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  検索中...
+                </>
               ) : (
-                <Search className="w-4 h-4 mr-2" />
+                <>
+                  <Search className="w-4 h-4 mr-2" />
+                  検索
+                </>
               )}
-              検索
             </Button>
-          </form>
-        </div>
-      </div>
+          </div>
+        </form>
 
-      <div className="container mx-auto px-4 py-6">
-        {booksQuery.isLoading && (
-          <div className="flex justify-center items-center py-12">
-            <Loader2 className="w-6 h-6 animate-spin" />
+        {/* 検索結果 */}
+        {searchKeyword && (
+          <div className="mb-4">
+            <p className="text-sm text-muted-foreground">
+              「{searchKeyword}」の検索結果: {searchResults.length}件
+            </p>
           </div>
         )}
 
-        {!booksQuery.isLoading && searchResults.length > 0 && (
-          <div>
-            <h2 className="text-2xl font-bold mb-6">
-              {searchKeyword ? `「${searchKeyword}」の検索結果` : '青空文庫の作品'}
-            </h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {searchResults.map((book: BookItem) => (
-                <Card
-                  key={book.id}
-                  className="cursor-pointer hover:shadow-lg transition-shadow flex flex-col h-full"
-                  onClick={() => handleBookSelect(book)}
-                >
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-base line-clamp-2">{book.title}</CardTitle>
-                    <CardDescription className="line-clamp-1">{book.author}</CardDescription>
-                  </CardHeader>
-                  <CardContent className="flex-1 flex flex-col pb-3">
-                    <div className="flex-1">
-                      {book.year && (
-                        <Badge variant="secondary" className="text-xs mr-2 mb-2">
-                          {book.year}年
-                        </Badge>
-                      )}
-                      {book.characterCount && (
-                        <Badge variant="outline" className="text-xs mb-2">
-                          {book.characterCount.toLocaleString()}字
-                        </Badge>
-                      )}
-                      {book.description && (
-                        <p className="text-sm text-muted-foreground line-clamp-3 mt-2">
-                          {book.description}
-                        </p>
-                      )}
-                    </div>
-                    <Button
-                      variant="default"
-                      size="sm"
-                      className="w-full mt-4"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleBookSelect(book);
-                      }}
-                    >
-                      読む
-                    </Button>
-                  </CardContent>
-                </Card>
-              ))}
+        {/* 書籍グリッド */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {searchResults.length > 0 ? (
+            searchResults.map((book) => (
+              <Card key={book.id} className="cursor-pointer hover:shadow-lg transition-shadow">
+                <CardHeader>
+                  <CardTitle className="text-lg line-clamp-2">{book.title}</CardTitle>
+                  <CardDescription>{book.author}</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="flex gap-2">
+                    <Badge variant="outline">{book.year}年</Badge>
+                    <Badge variant="outline">{book.characterCount?.toLocaleString()}字</Badge>
+                  </div>
+                  <p className="text-sm line-clamp-3">{book.description}</p>
+                  <Button
+                    className="w-full"
+                    onClick={() => handleBookSelect(book)}
+                  >
+                    <Book className="w-4 h-4 mr-2" />
+                    読む
+                  </Button>
+                </CardContent>
+              </Card>
+            ))
+          ) : searchKeyword ? (
+            <div className="col-span-full text-center py-12">
+              <p className="text-muted-foreground">検索結果がありません</p>
             </div>
-          </div>
-        )}
-
-        {!booksQuery.isLoading && searchResults.length === 0 && searchKeyword && (
-          <div className="text-center py-12">
-            <Book className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
-            <p className="text-muted-foreground text-lg">
-              「{searchKeyword}」に該当する作品が見つかりません
-            </p>
-          </div>
-        )}
-
-        {!booksQuery.isLoading && searchResults.length === 0 && !searchKeyword && (
-          <div className="text-center py-12">
-            <Book className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
-            <p className="text-muted-foreground text-lg">
-              作品を読み込み中です...
-            </p>
-          </div>
-        )}
+          ) : (
+            <div className="col-span-full text-center py-12">
+              <p className="text-muted-foreground">作品を検索してください</p>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
