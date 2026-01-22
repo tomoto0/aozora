@@ -5,11 +5,8 @@ import { publicProcedure, router } from "./_core/trpc";
 import { z } from "zod";
 import * as fs from "fs";
 import * as path from "path";
-import { exec } from "child_process";
-import { promisify } from "util";
 import * as iconv from "iconv-lite";
-
-const execAsync = promisify(exec);
+import AdmZip from "adm-zip";
 
 // 青空文庫の書籍データを格納する型
 interface AozoraBook {
@@ -33,6 +30,24 @@ const CSV_DIR = "/tmp/aozora_data";
 const CSV_FILE = path.join(CSV_DIR, "list_person_all_extended_utf8.csv");
 const ZIP_URL = "https://www.aozora.gr.jp/index_pages/list_person_all_extended_utf8.zip";
 
+// fetch APIを使用してファイルをダウンロードする関数
+async function downloadFile(url: string): Promise<Buffer> {
+  console.log("[Aozora] Downloading file from:", url);
+  
+  const response = await fetch(url, {
+    headers: {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    },
+  });
+  
+  if (!response.ok) {
+    throw new Error(`Failed to download file: ${response.status} ${response.statusText}`);
+  }
+  
+  const arrayBuffer = await response.arrayBuffer();
+  return Buffer.from(arrayBuffer);
+}
+
 // CSVファイルをダウンロードして解凍する関数
 async function downloadAndExtractCSV(): Promise<void> {
   try {
@@ -41,15 +56,14 @@ async function downloadAndExtractCSV(): Promise<void> {
       fs.mkdirSync(CSV_DIR, { recursive: true });
     }
 
-    const zipPath = path.join(CSV_DIR, "aozora_list.zip");
-    
     // ZIPファイルをダウンロード
-    console.log("[Aozora] Downloading CSV from:", ZIP_URL);
-    await execAsync(`curl -s "${ZIP_URL}" -o "${zipPath}"`);
+    console.log("[Aozora] Downloading CSV ZIP from:", ZIP_URL);
+    const zipBuffer = await downloadFile(ZIP_URL);
     
-    // 解凍
-    console.log("[Aozora] Extracting CSV...");
-    await execAsync(`cd "${CSV_DIR}" && unzip -o "${zipPath}"`);
+    // ZIPファイルを解凍
+    console.log("[Aozora] Extracting CSV ZIP...");
+    const zip = new AdmZip(zipBuffer);
+    zip.extractAllTo(CSV_DIR, true);
     
     console.log("[Aozora] CSV downloaded and extracted successfully");
   } catch (error) {
@@ -182,46 +196,30 @@ async function getAozoraBooks(): Promise<AozoraBook[]> {
 
 // ZIPファイルからテキストを抽出する関数
 async function extractTextFromZip(zipUrl: string): Promise<string> {
-  const tempDir = `/tmp/aozora_${Date.now()}`;
-  
   try {
-    // 一時ディレクトリを作成
-    fs.mkdirSync(tempDir, { recursive: true });
-    
-    const zipPath = path.join(tempDir, "book.zip");
-    
     // ZIPファイルをダウンロード
     console.log("[Aozora] Downloading ZIP from:", zipUrl);
-    const { stderr } = await execAsync(
-      `curl -s -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" "${zipUrl}" -o "${zipPath}"`,
-      { timeout: 30000 }
-    );
-    
-    if (stderr) {
-      console.error("[Aozora] curl stderr:", stderr);
-    }
+    const zipBuffer = await downloadFile(zipUrl);
     
     // ファイルサイズを確認
-    const stats = fs.statSync(zipPath);
-    if (stats.size < 100) {
-      throw new Error(`Downloaded file is too small: ${stats.size} bytes`);
+    if (zipBuffer.length < 100) {
+      throw new Error(`Downloaded file is too small: ${zipBuffer.length} bytes`);
     }
     
     // ZIPファイルを解凍
     console.log("[Aozora] Extracting ZIP...");
-    await execAsync(`cd "${tempDir}" && unzip -o "${zipPath}"`, { timeout: 10000 });
+    const zip = new AdmZip(zipBuffer);
+    const zipEntries = zip.getEntries();
     
     // テキストファイルを探す
-    const files = fs.readdirSync(tempDir);
-    const txtFile = files.find(f => f.endsWith(".txt"));
+    const txtEntry = zipEntries.find(entry => entry.entryName.endsWith(".txt"));
     
-    if (!txtFile) {
+    if (!txtEntry) {
       throw new Error("No text file found in ZIP");
     }
     
     // テキストファイルを読み込む（バイナリとして）
-    const txtPath = path.join(tempDir, txtFile);
-    const buffer = fs.readFileSync(txtPath);
+    const buffer = txtEntry.getData();
     
     // Shift-JISからUTF-8に変換
     const text = iconv.decode(buffer, "Shift_JIS");
@@ -229,13 +227,9 @@ async function extractTextFromZip(zipUrl: string): Promise<string> {
     console.log("[Aozora] Text extracted successfully, length:", text.length);
     return text;
     
-  } finally {
-    // 一時ディレクトリを削除
-    try {
-      await execAsync(`rm -rf "${tempDir}"`);
-    } catch (e) {
-      console.error("[Aozora] Failed to cleanup temp dir:", e);
-    }
+  } catch (error) {
+    console.error("[Aozora] extractTextFromZip error:", error);
+    throw error;
   }
 }
 
