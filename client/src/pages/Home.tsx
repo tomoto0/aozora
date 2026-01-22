@@ -3,9 +3,14 @@ import { Button } from "@/components/ui/button";
 import { APP_LOGO, APP_TITLE, getLoginUrl } from "@/const";
 import { Link } from "wouter";
 import { Book, Search, BookOpen, Sparkles } from "lucide-react";
+import { useEffect } from "react";
 
 export default function Home() {
   const { user, loading, isAuthenticated, logout } = useAuth();
+
+  useEffect(() => {
+    document.title = "青空文庫リーダー - 18,000作品以上の日本文学を無料で読む";
+  }, []);
 
   return (
     <div className="min-h-screen flex flex-col bg-gradient-to-br from-blue-50 to-indigo-100">
