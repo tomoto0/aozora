@@ -1,12 +1,22 @@
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
-import { publicProcedure, router } from "./_core/trpc";
+import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
 import { z } from "zod";
 import * as fs from "fs";
 import * as path from "path";
 import * as iconv from "iconv-lite";
 import AdmZip from "adm-zip";
+import {
+  addToBookshelf,
+  removeFromBookshelf,
+  getUserBookshelf,
+  isInBookshelf,
+  saveReadingProgress,
+  getReadingProgress,
+  getUserReadingHistory,
+  deleteReadingProgress,
+} from "./db";
 
 // 青空文庫の書籍データを格納する型
 interface AozoraBook {
@@ -388,6 +398,114 @@ export const appRouter = router({
           console.error("[Aozora] popular error:", error);
           throw new Error(`Failed to get popular books: ${error instanceof Error ? error.message : "Unknown error"}`);
         }
+      }),
+  }),
+
+  // 本棚（お気に入り）ルーター
+  bookshelf: router({
+    // 本棚に追加
+    add: protectedProcedure
+      .input(z.object({
+        bookId: z.string(),
+        title: z.string(),
+        author: z.string(),
+        textUrl: z.string().optional(),
+        cardUrl: z.string().optional(),
+        releaseDate: z.string().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        await addToBookshelf({
+          userId: ctx.user.id,
+          bookId: input.bookId,
+          title: input.title,
+          author: input.author,
+          textUrl: input.textUrl || null,
+          cardUrl: input.cardUrl || null,
+          releaseDate: input.releaseDate || null,
+        });
+        return { success: true };
+      }),
+
+    // 本棚から削除
+    remove: protectedProcedure
+      .input(z.object({
+        bookId: z.string(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        await removeFromBookshelf(ctx.user.id, input.bookId);
+        return { success: true };
+      }),
+
+    // 本棚の一覧を取得
+    list: protectedProcedure.query(async ({ ctx }) => {
+      const books = await getUserBookshelf(ctx.user.id);
+      return { books };
+    }),
+
+    // 作品が本棚に追加されているかチェック
+    isAdded: protectedProcedure
+      .input(z.object({
+        bookId: z.string(),
+      }))
+      .query(async ({ ctx, input }) => {
+        const isAdded = await isInBookshelf(ctx.user.id, input.bookId);
+        return { isAdded };
+      }),
+  }),
+
+  // 読書進捗ルーター
+  progress: router({
+    // 読書進捗を保存
+    save: protectedProcedure
+      .input(z.object({
+        bookId: z.string(),
+        title: z.string(),
+        author: z.string(),
+        textUrl: z.string().optional(),
+        cardUrl: z.string().optional(),
+        scrollPosition: z.number().min(0).max(100),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        await saveReadingProgress({
+          userId: ctx.user.id,
+          bookId: input.bookId,
+          title: input.title,
+          author: input.author,
+          textUrl: input.textUrl || null,
+          cardUrl: input.cardUrl || null,
+          scrollPosition: input.scrollPosition,
+        });
+        return { success: true };
+      }),
+
+    // 特定の作品の読書進捗を取得
+    get: protectedProcedure
+      .input(z.object({
+        bookId: z.string(),
+      }))
+      .query(async ({ ctx, input }) => {
+        const progress = await getReadingProgress(ctx.user.id, input.bookId);
+        return { progress };
+      }),
+
+    // 読書履歴を取得
+    history: protectedProcedure
+      .input(z.object({
+        limit: z.number().min(1).max(50).default(20),
+      }))
+      .query(async ({ ctx, input }) => {
+        const history = await getUserReadingHistory(ctx.user.id, input.limit);
+        return { history };
+      }),
+
+    // 読書進捗を削除
+    delete: protectedProcedure
+      .input(z.object({
+        bookId: z.string(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        await deleteReadingProgress(ctx.user.id, input.bookId);
+        return { success: true };
       }),
   }),
 });

@@ -1,9 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Search, BookOpen, Loader2, ArrowLeft, ChevronLeft, ChevronRight, Minus, Plus, Type, Sun, Moon } from 'lucide-react';
+import { Search, BookOpen, Loader2, ArrowLeft, ChevronLeft, ChevronRight, Minus, Plus, Type, Sun, Moon, Heart, Library, Check } from 'lucide-react';
 import { trpc } from '@/lib/trpc';
+import { useAuth } from '@/_core/hooks/useAuth';
+import { Link, useLocation, useSearch } from 'wouter';
+import { toast } from 'sonner';
 
 interface BookItem {
   id: string;
@@ -51,13 +54,42 @@ const READING_MODES = {
 };
 
 export default function BooksPage() {
+  const { isAuthenticated } = useAuth();
+  const searchParams = useSearch();
+  const [, setLocation] = useLocation();
+  
   const [searchKeyword, setSearchKeyword] = useState('');
   const [debouncedKeyword, setDebouncedKeyword] = useState('');
   const [selectedBook, setSelectedBook] = useState<BookItem | null>(null);
   const [currentPage, setCurrentPage] = useState(0);
-  const [fontSize, setFontSize] = useState(18); // デフォルトは「中」サイズ
-  const [readingMode, setReadingMode] = useState<ReadingMode>('light'); // デフォルトはライトモード
+  const [fontSize, setFontSize] = useState(18);
+  const [readingMode, setReadingMode] = useState<ReadingMode>('light');
+  const [initialScrollRestored, setInitialScrollRestored] = useState(false);
   const ITEMS_PER_PAGE = 20;
+  
+  const textContainerRef = useRef<HTMLDivElement>(null);
+  const utils = trpc.useUtils();
+
+  // URLパラメータから本を開く
+  useEffect(() => {
+    const params = new URLSearchParams(searchParams);
+    const readBookId = params.get('read');
+    const textUrl = params.get('textUrl');
+    
+    if (readBookId && textUrl) {
+      // URLパラメータから本の情報を復元
+      setSelectedBook({
+        id: readBookId,
+        title: '',
+        author: '',
+        textUrl: decodeURIComponent(textUrl),
+        cardUrl: '',
+        releaseDate: '',
+      });
+      // URLパラメータをクリア
+      setLocation('/books', { replace: true });
+    }
+  }, [searchParams, setLocation]);
 
   // 検索クエリのデバウンス
   useEffect(() => {
@@ -89,6 +121,119 @@ export default function BooksPage() {
     { id: selectedBook?.id || "", textUrl: selectedBook?.textUrl || "" },
     { enabled: !!selectedBook }
   );
+
+  // 本棚に追加されているかチェック
+  const isInBookshelfQuery = trpc.bookshelf.isAdded.useQuery(
+    { bookId: selectedBook?.id || "" },
+    { enabled: !!selectedBook && isAuthenticated }
+  );
+
+  // 読書進捗を取得
+  const progressQuery = trpc.progress.get.useQuery(
+    { bookId: selectedBook?.id || "" },
+    { enabled: !!selectedBook && isAuthenticated }
+  );
+
+  // 本棚に追加
+  const addToBookshelfMutation = trpc.bookshelf.add.useMutation({
+    onSuccess: () => {
+      toast.success('本棚に追加しました');
+      utils.bookshelf.isAdded.invalidate({ bookId: selectedBook?.id || "" });
+      utils.bookshelf.list.invalidate();
+    },
+    onError: (error) => {
+      toast.error(`追加に失敗しました: ${error.message}`);
+    },
+  });
+
+  // 本棚から削除
+  const removeFromBookshelfMutation = trpc.bookshelf.remove.useMutation({
+    onSuccess: () => {
+      toast.success('本棚から削除しました');
+      utils.bookshelf.isAdded.invalidate({ bookId: selectedBook?.id || "" });
+      utils.bookshelf.list.invalidate();
+    },
+    onError: (error) => {
+      toast.error(`削除に失敗しました: ${error.message}`);
+    },
+  });
+
+  // 読書進捗を保存
+  const saveProgressMutation = trpc.progress.save.useMutation({
+    onError: (error) => {
+      console.error('Failed to save progress:', error);
+    },
+  });
+
+  // スクロール位置を保存する関数
+  const saveScrollPosition = useCallback(() => {
+    if (!selectedBook || !isAuthenticated || !textContainerRef.current) return;
+    
+    const container = textContainerRef.current;
+    const scrollTop = container.scrollTop;
+    const scrollHeight = container.scrollHeight - container.clientHeight;
+    const scrollPercent = scrollHeight > 0 ? Math.round((scrollTop / scrollHeight) * 100) : 0;
+    
+    saveProgressMutation.mutate({
+      bookId: selectedBook.id,
+      title: selectedBook.title || textQuery.data?.id || '',
+      author: selectedBook.author || '',
+      textUrl: selectedBook.textUrl,
+      cardUrl: selectedBook.cardUrl,
+      scrollPosition: scrollPercent,
+    });
+  }, [selectedBook, isAuthenticated, saveProgressMutation, textQuery.data]);
+
+  // スクロールイベントでデバウンスして保存
+  useEffect(() => {
+    if (!selectedBook || !isAuthenticated || !textContainerRef.current) return;
+    
+    const container = textContainerRef.current;
+    let timeoutId: NodeJS.Timeout;
+    
+    const handleScroll = () => {
+      clearTimeout(timeoutId);
+      timeoutId = setTimeout(saveScrollPosition, 1000); // 1秒後に保存
+    };
+    
+    container.addEventListener('scroll', handleScroll);
+    
+    return () => {
+      container.removeEventListener('scroll', handleScroll);
+      clearTimeout(timeoutId);
+    };
+  }, [selectedBook, isAuthenticated, saveScrollPosition]);
+
+  // テキスト読み込み完了後に読書進捗を復元
+  useEffect(() => {
+    const progress = progressQuery.data?.progress;
+    if (
+      textQuery.data &&
+      progress &&
+      textContainerRef.current &&
+      !initialScrollRestored
+    ) {
+      const container = textContainerRef.current;
+      const scrollHeight = container.scrollHeight - container.clientHeight;
+      const targetScroll = (progress.scrollPosition / 100) * scrollHeight;
+      
+      // 少し遅延を入れてスクロール
+      setTimeout(() => {
+        container.scrollTo({ top: targetScroll, behavior: 'smooth' });
+        setInitialScrollRestored(true);
+        if (progress.scrollPosition > 0) {
+          toast.info(`前回の続き（${progress.scrollPosition}%）から再開します`);
+        }
+      }, 100);
+    }
+  }, [textQuery.data, progressQuery.data, initialScrollRestored]);
+
+  // 本を閉じる時に進捗をリセット
+  useEffect(() => {
+    if (!selectedBook) {
+      setInitialScrollRestored(false);
+    }
+  }, [selectedBook]);
 
   // 表示するデータを決定
   const displayData = debouncedKeyword ? searchQuery.data : popularQuery.data;
@@ -123,9 +268,28 @@ export default function BooksPage() {
     setReadingMode(prev => prev === 'light' ? 'dark' : 'light');
   };
 
+  // 本棚に追加/削除
+  const handleToggleBookshelf = () => {
+    if (!selectedBook || !isAuthenticated) return;
+    
+    if (isInBookshelfQuery.data?.isAdded) {
+      removeFromBookshelfMutation.mutate({ bookId: selectedBook.id });
+    } else {
+      addToBookshelfMutation.mutate({
+        bookId: selectedBook.id,
+        title: selectedBook.title,
+        author: selectedBook.author,
+        textUrl: selectedBook.textUrl,
+        cardUrl: selectedBook.cardUrl,
+        releaseDate: selectedBook.releaseDate,
+      });
+    }
+  };
+
   // 現在のモード設定を取得
   const mode = READING_MODES[readingMode];
   const ModeIcon = mode.icon;
+  const isInBookshelf = isInBookshelfQuery.data?.isAdded || false;
 
   // 書籍詳細ビュー
   if (selectedBook) {
@@ -135,7 +299,10 @@ export default function BooksPage() {
           <div className="container mx-auto px-4 py-4 flex items-center justify-between">
             <Button
               variant="outline"
-              onClick={() => setSelectedBook(null)}
+              onClick={() => {
+                saveScrollPosition(); // 閉じる前に保存
+                setSelectedBook(null);
+              }}
               className={readingMode === 'dark' 
                 ? "border-gray-600 hover:bg-gray-700 text-gray-200" 
                 : "border-amber-300 hover:bg-amber-100"
@@ -146,6 +313,34 @@ export default function BooksPage() {
             </Button>
 
             <div className="flex items-center gap-3">
+              {/* 本棚ボタン */}
+              {isAuthenticated && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleToggleBookshelf}
+                  disabled={addToBookshelfMutation.isPending || removeFromBookshelfMutation.isPending}
+                  className={`flex items-center gap-2 ${
+                    isInBookshelf
+                      ? readingMode === 'dark'
+                        ? "bg-red-900/50 border-red-700 text-red-300 hover:bg-red-800/50"
+                        : "bg-red-50 border-red-300 text-red-600 hover:bg-red-100"
+                      : readingMode === 'dark'
+                        ? "border-gray-600 hover:bg-gray-700 text-gray-200"
+                        : "border-amber-300 hover:bg-amber-100"
+                  }`}
+                >
+                  {addToBookshelfMutation.isPending || removeFromBookshelfMutation.isPending ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Heart className={`w-4 h-4 ${isInBookshelf ? "fill-current" : ""}`} />
+                  )}
+                  <span className="hidden sm:inline">
+                    {isInBookshelf ? "本棚から削除" : "本棚に追加"}
+                  </span>
+                </Button>
+              )}
+
               {/* ライト/ダークモード切り替えボタン */}
               <Button
                 variant="outline"
@@ -207,10 +402,10 @@ export default function BooksPage() {
               <Card className={`sticky top-24 ${mode.cardBorder} ${mode.cardBg}`}>
                 <CardHeader>
                   <CardTitle className={`text-xl ${readingMode === 'dark' ? "text-gray-100" : "text-amber-900"}`}>
-                    {selectedBook.title}
+                    {selectedBook.title || textQuery.data?.id || '読み込み中...'}
                   </CardTitle>
                   <CardDescription className={readingMode === 'dark' ? "text-gray-400" : "text-amber-700"}>
-                    {selectedBook.author}
+                    {selectedBook.author || ''}
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
@@ -239,6 +434,33 @@ export default function BooksPage() {
                     >
                       青空文庫で見る →
                     </a>
+                  )}
+
+                  {/* 本棚に追加ボタン（サイドバー版） */}
+                  {isAuthenticated && (
+                    <div className={`pt-4 border-t ${readingMode === 'dark' ? "border-gray-700" : "border-amber-200"}`}>
+                      <Button
+                        variant={isInBookshelf ? "default" : "outline"}
+                        className={`w-full ${
+                          isInBookshelf
+                            ? readingMode === 'dark'
+                              ? "bg-red-900/50 hover:bg-red-800/50 text-red-300"
+                              : "bg-red-100 hover:bg-red-200 text-red-700 border-red-300"
+                            : readingMode === 'dark'
+                              ? "border-gray-600 hover:bg-gray-700 text-gray-300"
+                              : "border-amber-300 hover:bg-amber-100"
+                        }`}
+                        onClick={handleToggleBookshelf}
+                        disabled={addToBookshelfMutation.isPending || removeFromBookshelfMutation.isPending}
+                      >
+                        {addToBookshelfMutation.isPending || removeFromBookshelfMutation.isPending ? (
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        ) : (
+                          <Heart className={`w-4 h-4 mr-2 ${isInBookshelf ? "fill-current" : ""}`} />
+                        )}
+                        {isInBookshelf ? "本棚から削除" : "本棚に追加"}
+                      </Button>
+                    </div>
                   )}
 
                   {/* フォントサイズ調整（サイドバー版） */}
@@ -310,7 +532,10 @@ export default function BooksPage() {
             {/* 右側：テキスト表示 */}
             <div className="lg:col-span-3">
               <Card className={`${mode.cardBorder} ${mode.cardBg}`}>
-                <CardContent className="p-8">
+                <CardContent 
+                  ref={textContainerRef}
+                  className="p-8 max-h-[80vh] overflow-y-auto"
+                >
                   {textQuery.isLoading ? (
                     <div className="flex items-center justify-center py-20">
                       <Loader2 className={`w-8 h-8 animate-spin ${readingMode === 'dark' ? "text-gray-400" : "text-amber-600"}`} />
@@ -351,13 +576,23 @@ export default function BooksPage() {
     <div className="min-h-screen bg-gradient-to-b from-amber-50 to-orange-50">
       <div className="container mx-auto px-4 py-8">
         {/* ヘッダー */}
-        <div className="text-center mb-12">
-          <h1 className="text-4xl font-bold text-amber-900 mb-4">
-            青空文庫リーダー
-          </h1>
-          <p className="text-amber-700 text-lg">
-            {total > 0 ? `${total.toLocaleString()}件の作品から検索` : "日本の名作を無料で読もう"}
-          </p>
+        <div className="flex items-center justify-between mb-8">
+          <div className="text-center flex-1">
+            <h1 className="text-4xl font-bold text-amber-900 mb-4">
+              青空文庫リーダー
+            </h1>
+            <p className="text-amber-700 text-lg">
+              {total > 0 ? `${total.toLocaleString()}件の作品から検索` : "日本の名作を無料で読もう"}
+            </p>
+          </div>
+          {isAuthenticated && (
+            <Link href="/bookshelf">
+              <Button variant="outline" className="border-amber-300 hover:bg-amber-100">
+                <Library className="w-4 h-4 mr-2" />
+                本棚
+              </Button>
+            </Link>
+          )}
         </div>
 
         {/* 検索バー */}
@@ -387,27 +622,12 @@ export default function BooksPage() {
           <>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
               {books.map((book) => (
-                <Card
-                  key={book.id}
-                  className="hover:shadow-lg transition-shadow cursor-pointer group border-amber-200"
-                  onClick={() => setSelectedBook(book)}
-                >
-                  <CardHeader>
-                    <CardTitle className="text-lg group-hover:text-amber-700 transition-colors line-clamp-2">
-                      {book.title}
-                    </CardTitle>
-                    <CardDescription>{book.author}</CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <Button
-                      variant="outline"
-                      className="w-full group-hover:bg-amber-50 group-hover:border-amber-300"
-                    >
-                      <BookOpen className="w-4 h-4 mr-2" />
-                      読む
-                    </Button>
-                  </CardContent>
-                </Card>
+                <BookCard 
+                  key={book.id} 
+                  book={book} 
+                  onSelect={setSelectedBook}
+                  isAuthenticated={isAuthenticated}
+                />
               ))}
             </div>
 
@@ -459,5 +679,111 @@ export default function BooksPage() {
         )}
       </div>
     </div>
+  );
+}
+
+// 書籍カードコンポーネント
+function BookCard({ 
+  book, 
+  onSelect,
+  isAuthenticated
+}: { 
+  book: BookItem; 
+  onSelect: (book: BookItem) => void;
+  isAuthenticated: boolean;
+}) {
+  const utils = trpc.useUtils();
+  
+  // 本棚に追加されているかチェック
+  const isInBookshelfQuery = trpc.bookshelf.isAdded.useQuery(
+    { bookId: book.id },
+    { enabled: isAuthenticated }
+  );
+
+  // 本棚に追加
+  const addToBookshelfMutation = trpc.bookshelf.add.useMutation({
+    onSuccess: () => {
+      toast.success('本棚に追加しました');
+      utils.bookshelf.isAdded.invalidate({ bookId: book.id });
+      utils.bookshelf.list.invalidate();
+    },
+    onError: (error) => {
+      toast.error(`追加に失敗しました: ${error.message}`);
+    },
+  });
+
+  // 本棚から削除
+  const removeFromBookshelfMutation = trpc.bookshelf.remove.useMutation({
+    onSuccess: () => {
+      toast.success('本棚から削除しました');
+      utils.bookshelf.isAdded.invalidate({ bookId: book.id });
+      utils.bookshelf.list.invalidate();
+    },
+    onError: (error) => {
+      toast.error(`削除に失敗しました: ${error.message}`);
+    },
+  });
+
+  const isInBookshelf = isInBookshelfQuery.data?.isAdded || false;
+  const isPending = addToBookshelfMutation.isPending || removeFromBookshelfMutation.isPending;
+
+  const handleToggleBookshelf = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (isInBookshelf) {
+      removeFromBookshelfMutation.mutate({ bookId: book.id });
+    } else {
+      addToBookshelfMutation.mutate({
+        bookId: book.id,
+        title: book.title,
+        author: book.author,
+        textUrl: book.textUrl,
+        cardUrl: book.cardUrl,
+        releaseDate: book.releaseDate,
+      });
+    }
+  };
+
+  return (
+    <Card
+      className="hover:shadow-lg transition-shadow cursor-pointer group border-amber-200 relative"
+      onClick={() => onSelect(book)}
+    >
+      {/* 本棚追加チェックマーク */}
+      {isAuthenticated && (
+        <button
+          onClick={handleToggleBookshelf}
+          disabled={isPending}
+          className={`absolute top-3 right-3 z-10 w-8 h-8 rounded-full flex items-center justify-center transition-all ${
+            isInBookshelf
+              ? "bg-red-100 text-red-600 hover:bg-red-200"
+              : "bg-gray-100 text-gray-400 hover:bg-amber-100 hover:text-amber-600"
+          }`}
+        >
+          {isPending ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : isInBookshelf ? (
+            <Check className="w-4 h-4" />
+          ) : (
+            <Heart className="w-4 h-4" />
+          )}
+        </button>
+      )}
+      
+      <CardHeader>
+        <CardTitle className="text-lg group-hover:text-amber-700 transition-colors line-clamp-2 pr-8">
+          {book.title}
+        </CardTitle>
+        <CardDescription>{book.author}</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <Button
+          variant="outline"
+          className="w-full group-hover:bg-amber-50 group-hover:border-amber-300"
+        >
+          <BookOpen className="w-4 h-4 mr-2" />
+          読む
+        </Button>
+      </CardContent>
+    </Card>
   );
 }
