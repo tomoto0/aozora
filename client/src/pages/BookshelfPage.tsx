@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { BookOpen, Loader2, Trash2, Library, ArrowLeft, BookMarked, Clock } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { BookOpen, Loader2, Trash2, Library, ArrowLeft, BookMarked, Clock, Sparkles } from 'lucide-react';
 import { trpc } from '@/lib/trpc';
 import { useAuth } from '@/_core/hooks/useAuth';
 import { getLoginUrl } from '@/const';
@@ -16,6 +17,7 @@ interface BookshelfItem {
   textUrl: string | null;
   cardUrl: string | null;
   releaseDate: string | null;
+  summary: string | null;
   createdAt: Date;
 }
 
@@ -36,6 +38,8 @@ export default function BookshelfPage() {
   const { user, loading: authLoading, isAuthenticated } = useAuth();
   const [, setLocation] = useLocation();
   const [activeTab, setActiveTab] = useState<TabType>('bookshelf');
+  const [summaryDialogOpen, setSummaryDialogOpen] = useState(false);
+  const [selectedBookSummary, setSelectedBookSummary] = useState<{ title: string; author: string; summary: string } | null>(null);
   const utils = trpc.useUtils();
 
   // 本棚の一覧を取得
@@ -77,6 +81,18 @@ export default function BookshelfPage() {
       // BooksPageに遷移して、該当の本を開く
       // URLパラメータで本の情報を渡す
       setLocation(`/books?read=${encodeURIComponent(bookId)}&textUrl=${encodeURIComponent(textUrl)}`);
+    }
+  };
+
+  // あらすじを表示
+  const handleShowSummary = (book: BookshelfItem) => {
+    if (book.summary) {
+      setSelectedBookSummary({
+        title: book.title,
+        author: book.author,
+        summary: book.summary,
+      });
+      setSummaryDialogOpen(true);
     }
   };
 
@@ -202,6 +218,9 @@ export default function BookshelfPage() {
                     <CardHeader>
                       <CardTitle className="text-lg line-clamp-2 group-hover:text-amber-700 transition-colors">
                         {book.title}
+                        {book.summary && (
+                          <Sparkles className="w-4 h-4 inline-block ml-2 text-purple-500" />
+                        )}
                       </CardTitle>
                       <CardDescription>{book.author}</CardDescription>
                     </CardHeader>
@@ -224,6 +243,17 @@ export default function BookshelfPage() {
                           <BookOpen className="w-4 h-4 mr-2" />
                           読む
                         </Button>
+                        {book.summary && (
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            className="border-purple-200 hover:bg-purple-50 hover:border-purple-300 text-purple-600"
+                            onClick={() => handleShowSummary(book)}
+                            title="あらすじを見る"
+                          >
+                            <Sparkles className="w-4 h-4" />
+                          </Button>
+                        )}
                         <Button
                           variant="outline"
                           size="icon"
@@ -328,6 +358,39 @@ export default function BookshelfPage() {
           </>
         )}
       </div>
+
+      {/* あらすじダイアログ */}
+      <Dialog open={summaryDialogOpen} onOpenChange={setSummaryDialogOpen}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-hidden flex flex-col bg-white">
+          <DialogHeader className="flex-shrink-0">
+            <DialogTitle className="flex items-center gap-2 text-amber-900">
+              <Sparkles className="w-5 h-5 text-purple-500" />
+              あらすじ
+            </DialogTitle>
+            {selectedBookSummary && (
+              <p className="text-sm text-amber-700">
+                {selectedBookSummary.title} - {selectedBookSummary.author}
+              </p>
+            )}
+          </DialogHeader>
+          <div className="flex-1 overflow-y-auto pr-2">
+            {selectedBookSummary && (
+              <p className="text-gray-800 leading-relaxed whitespace-pre-wrap">
+                {selectedBookSummary.summary}
+              </p>
+            )}
+          </div>
+          <div className="flex-shrink-0 flex justify-end mt-4 pt-4 border-t border-gray-200">
+            <Button
+              variant="outline"
+              onClick={() => setSummaryDialogOpen(false)}
+              className="border-amber-300 hover:bg-amber-100"
+            >
+              閉じる
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

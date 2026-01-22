@@ -180,6 +180,16 @@ export default function BooksPage() {
     },
   });
 
+  // あらすじを本棚に保存
+  const saveSummaryMutation = trpc.bookshelf.saveSummary.useMutation({
+    onSuccess: () => {
+      toast.success('あらすじを本棚に保存しました');
+    },
+    onError: (error) => {
+      toast.error(`あらすじの保存に失敗しました: ${error.message}`);
+    },
+  });
+
   // スクロール位置を保存する関数
   const saveScrollPosition = useCallback(() => {
     if (!selectedBook || !isAuthenticated || !textContainerRef.current) return;
@@ -726,7 +736,62 @@ export default function BooksPage() {
                 </div>
               ) : null}
             </div>
-            <div className="flex-shrink-0 flex justify-end gap-3 mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+            <div className="flex-shrink-0 flex justify-between items-center gap-3 mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+              <div>
+                {isAuthenticated && generatedSummary && !generateSummaryMutation.isPending && (
+                  <Button
+                    variant="default"
+                    onClick={() => {
+                      if (!selectedBook?.id || !generatedSummary) return;
+                      // 本棚に追加されていない場合は先に追加する
+                      if (!isInBookshelfQuery.data?.isAdded) {
+                        addToBookshelfMutation.mutate({
+                          bookId: selectedBook.id,
+                          title: selectedBook.title || '',
+                          author: selectedBook.author || '',
+                          textUrl: selectedBook.textUrl,
+                          cardUrl: selectedBook.cardUrl,
+                        }, {
+                          onSuccess: () => {
+                            // 本棚に追加後、あらすじを保存
+                            saveSummaryMutation.mutate({
+                              bookId: selectedBook.id,
+                              summary: generatedSummary,
+                            });
+                          }
+                        });
+                      } else {
+                        saveSummaryMutation.mutate({
+                          bookId: selectedBook.id,
+                          summary: generatedSummary,
+                        });
+                      }
+                    }}
+                    disabled={saveSummaryMutation.isPending || addToBookshelfMutation.isPending}
+                    className={`${readingMode === 'dark' 
+                      ? "bg-purple-600 hover:bg-purple-700 text-white" 
+                      : "bg-purple-600 hover:bg-purple-700 text-white"
+                    }`}
+                  >
+                    {saveSummaryMutation.isPending ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        保存中...
+                      </>
+                    ) : (
+                      <>
+                        <Heart className="w-4 h-4 mr-2" />
+                        あらすじを保存する
+                      </>
+                    )}
+                  </Button>
+                )}
+                {isAuthenticated && generatedSummary && !isInBookshelfQuery.data?.isAdded && (
+                  <p className={`text-xs mt-1 ${readingMode === 'dark' ? "text-gray-400" : "text-gray-500"}`}>
+                    ※ 保存すると自動的に本棚にも追加されます
+                  </p>
+                )}
+              </div>
               <Button
                 variant="outline"
                 onClick={() => setSummaryDialogOpen(false)}

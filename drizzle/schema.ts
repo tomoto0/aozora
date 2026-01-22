@@ -43,6 +43,10 @@ export const bookshelf = mysqlTable("bookshelf", {
   cardUrl: text("cardUrl"),
   /** 公開日 */
   releaseDate: varchar("releaseDate", { length: 32 }),
+  /** AI生成あらすじ */
+  summary: text("summary"),
+  /** あらすじ保存日時 */
+  summaryCreatedAt: timestamp("summaryCreatedAt"),
   /** 追加日時 */
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });

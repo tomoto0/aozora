@@ -155,6 +155,52 @@ export async function isInBookshelf(userId: number, bookId: string): Promise<boo
   return result.length > 0;
 }
 
+/** 本棚の作品にあらすじを保存 */
+export async function saveSummaryToBookshelf(userId: number, bookId: string, summary: string): Promise<boolean> {
+  const db = await getDb();
+  if (!db) {
+    throw new Error("Database not available");
+  }
+
+  // 本棚に作品が存在するかチェック
+  const existing = await db
+    .select()
+    .from(bookshelf)
+    .where(and(eq(bookshelf.userId, userId), eq(bookshelf.bookId, bookId)))
+    .limit(1);
+
+  if (existing.length === 0) {
+    return false; // 本棚に追加されていない
+  }
+
+  // あらすじを更新
+  await db
+    .update(bookshelf)
+    .set({
+      summary: summary,
+      summaryCreatedAt: new Date(),
+    })
+    .where(and(eq(bookshelf.userId, userId), eq(bookshelf.bookId, bookId)));
+
+  return true;
+}
+
+/** 本棚の作品のあらすじを取得 */
+export async function getSummaryFromBookshelf(userId: number, bookId: string): Promise<string | null> {
+  const db = await getDb();
+  if (!db) {
+    return null;
+  }
+
+  const result = await db
+    .select({ summary: bookshelf.summary })
+    .from(bookshelf)
+    .where(and(eq(bookshelf.userId, userId), eq(bookshelf.bookId, bookId)))
+    .limit(1);
+
+  return result.length > 0 ? result[0].summary : null;
+}
+
 // =====================
 // 読書進捗機能
 // =====================

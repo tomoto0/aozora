@@ -12,6 +12,8 @@ import {
   removeFromBookshelf,
   getUserBookshelf,
   isInBookshelf,
+  saveSummaryToBookshelf,
+  getSummaryFromBookshelf,
   saveReadingProgress,
   getReadingProgress,
   getUserReadingHistory,
@@ -512,6 +514,30 @@ export const appRouter = router({
       .query(async ({ ctx, input }) => {
         const isAdded = await isInBookshelf(ctx.user.id, input.bookId);
         return { isAdded };
+      }),
+
+    // あらすじを本棚に保存
+    saveSummary: protectedProcedure
+      .input(z.object({
+        bookId: z.string(),
+        summary: z.string(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const success = await saveSummaryToBookshelf(ctx.user.id, input.bookId, input.summary);
+        if (!success) {
+          throw new Error("この作品は本棚に追加されていません。先に本棚に追加してください。");
+        }
+        return { success: true };
+      }),
+
+    // 本棚のあらすじを取得
+    getSummary: protectedProcedure
+      .input(z.object({
+        bookId: z.string(),
+      }))
+      .query(async ({ ctx, input }) => {
+        const summary = await getSummaryFromBookshelf(ctx.user.id, input.bookId);
+        return { summary };
       }),
   }),
 
