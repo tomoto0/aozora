@@ -17,6 +17,7 @@ import {
   getUserReadingHistory,
   deleteReadingProgress,
 } from "./db";
+import { invokeLLM } from "./_core/llm";
 
 // 青空文庫の書籍データを格納する型
 interface AozoraBook {
@@ -334,6 +335,65 @@ export const appRouter = router({
         } catch (error) {
           console.error("[Aozora] getText error:", error);
           throw new Error(`Failed to get book text: ${error instanceof Error ? error.message : "Unknown error"}`);
+        }
+      }),
+
+    // あらすじ生成（AI機能）
+    generateSummary: publicProcedure
+      .input(z.object({
+        id: z.string(),
+        title: z.string(),
+        author: z.string(),
+        text: z.string(),
+      }))
+      .mutation(async ({ input }) => {
+        const { id, title, author, text } = input;
+        
+        try {
+          console.log(`[Aozora] Generating summary for book ${id}: ${title}`);
+          
+          // テキストが長すぎる場合は切り詰める（LLMのトークン制限を考慮）
+          const maxTextLength = 15000;
+          const truncatedText = text.length > maxTextLength 
+            ? text.substring(0, maxTextLength) + "\n\n（以下省略）"
+            : text;
+          
+          const response = await invokeLLM({
+            messages: [
+              {
+                role: "system",
+                content: `あなたは日本文学の専門家です。与えられた作品の内容を読み、簡潔で魅力的なあらすじを日本語で生成してください。
+
+ルール:
+- あらすじは200～400文字程度でまとめてください
+- 物語の主要なテーマやメッセージを含めてください
+- ネタバレは避け、読者の興味を引くように書いてください
+- 文学的な表現を使い、作品の雰囲気を伝えてください`
+              },
+              {
+                role: "user",
+                content: `以下の作品のあらすじを生成してください。\n\nタイトル: ${title}\n著者: ${author}\n\n本文:\n${truncatedText}`
+              }
+            ],
+          });
+          
+          const summary = response.choices[0]?.message?.content;
+          
+          if (!summary || typeof summary !== "string") {
+            throw new Error("あらすじの生成に失敗しました");
+          }
+          
+          console.log(`[Aozora] Summary generated successfully for book ${id}`);
+          
+          return {
+            id,
+            title,
+            author,
+            summary: summary.trim(),
+          };
+        } catch (error) {
+          console.error("[Aozora] generateSummary error:", error);
+          throw new Error(`あらすじの生成に失敗しました: ${error instanceof Error ? error.message : "Unknown error"}`);
         }
       }),
 

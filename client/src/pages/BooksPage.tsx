@@ -2,7 +2,8 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Search, BookOpen, Loader2, ArrowLeft, ChevronLeft, ChevronRight, Minus, Plus, Type, Sun, Moon, Heart, Library, Check } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { Search, BookOpen, Loader2, ArrowLeft, ChevronLeft, ChevronRight, Minus, Plus, Type, Sun, Moon, Heart, Library, Check, Sparkles, X } from 'lucide-react';
 import { trpc } from '@/lib/trpc';
 import { useAuth } from '@/_core/hooks/useAuth';
 import { Link, useLocation, useSearch } from 'wouter';
@@ -65,6 +66,8 @@ export default function BooksPage() {
   const [fontSize, setFontSize] = useState(18);
   const [readingMode, setReadingMode] = useState<ReadingMode>('light');
   const [initialScrollRestored, setInitialScrollRestored] = useState(false);
+  const [summaryDialogOpen, setSummaryDialogOpen] = useState(false);
+  const [generatedSummary, setGeneratedSummary] = useState<string | null>(null);
   const ITEMS_PER_PAGE = 20;
   
   const textContainerRef = useRef<HTMLDivElement>(null);
@@ -165,6 +168,17 @@ export default function BooksPage() {
     },
   });
 
+  // あらすじ生成
+  const generateSummaryMutation = trpc.books.generateSummary.useMutation({
+    onSuccess: (data) => {
+      setGeneratedSummary(data.summary);
+      toast.success('あらすじを生成しました');
+    },
+    onError: (error) => {
+      toast.error(`あらすじの生成に失敗しました: ${error.message}`);
+    },
+  });
+
   // スクロール位置を保存する関数
   const saveScrollPosition = useCallback(() => {
     if (!selectedBook || !isAuthenticated || !textContainerRef.current) return;
@@ -232,6 +246,7 @@ export default function BooksPage() {
   useEffect(() => {
     if (!selectedBook) {
       setInitialScrollRestored(false);
+      setGeneratedSummary(null);
     }
   }, [selectedBook]);
 
@@ -286,6 +301,23 @@ export default function BooksPage() {
     }
   };
 
+  // あらすじを生成する関数
+  const handleGenerateSummary = () => {
+    if (!selectedBook || !textQuery.data) return;
+    
+    setSummaryDialogOpen(true);
+    
+    // 既に生成済みの場合は再生成しない
+    if (generatedSummary) return;
+    
+    generateSummaryMutation.mutate({
+      id: selectedBook.id,
+      title: selectedBook.title || textQuery.data.id,
+      author: selectedBook.author || '不明',
+      text: textQuery.data.text,
+    });
+  };
+
   // 現在のモード設定を取得
   const mode = READING_MODES[readingMode];
   const ModeIcon = mode.icon;
@@ -313,6 +345,26 @@ export default function BooksPage() {
             </Button>
 
             <div className="flex items-center gap-3">
+              {/* あらすじ生成ボタン */}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleGenerateSummary}
+                disabled={!textQuery.data || generateSummaryMutation.isPending}
+                className={`flex items-center gap-2 ${
+                  readingMode === 'dark'
+                    ? "border-purple-600 hover:bg-purple-900/50 text-purple-300"
+                    : "border-purple-300 hover:bg-purple-100 text-purple-700"
+                }`}
+              >
+                {generateSummaryMutation.isPending ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Sparkles className="w-4 h-4" />
+                )}
+                <span className="hidden sm:inline">あらすじ</span>
+              </Button>
+
               {/* 本棚ボタン */}
               {isAuthenticated && (
                 <Button
@@ -435,6 +487,27 @@ export default function BooksPage() {
                       青空文庫で見る →
                     </a>
                   )}
+
+                  {/* あらすじ生成ボタン（サイドバー版） */}
+                  <div className={`pt-4 border-t ${readingMode === 'dark' ? "border-gray-700" : "border-amber-200"}`}>
+                    <Button
+                      variant="outline"
+                      className={`w-full ${
+                        readingMode === 'dark'
+                          ? "border-purple-600 hover:bg-purple-900/50 text-purple-300"
+                          : "border-purple-300 hover:bg-purple-100 text-purple-700"
+                      }`}
+                      onClick={handleGenerateSummary}
+                      disabled={!textQuery.data || generateSummaryMutation.isPending}
+                    >
+                      {generateSummaryMutation.isPending ? (
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      ) : (
+                        <Sparkles className="w-4 h-4 mr-2" />
+                      )}
+                      AIであらすじを生成
+                    </Button>
+                  </div>
 
                   {/* 本棚に追加ボタン（サイドバー版） */}
                   {isAuthenticated && (
@@ -567,6 +640,87 @@ export default function BooksPage() {
             </div>
           </div>
         </div>
+
+        {/* あらすじポップアップダイアログ */}
+        <Dialog open={summaryDialogOpen} onOpenChange={setSummaryDialogOpen}>
+          <DialogContent className={`max-w-2xl ${
+            readingMode === 'dark' 
+              ? "bg-gray-800 border-gray-700 text-gray-100" 
+              : "bg-white border-amber-200"
+          }`}>
+            <DialogHeader>
+              <DialogTitle className={`flex items-center gap-2 text-xl ${
+                readingMode === 'dark' ? "text-gray-100" : "text-amber-900"
+              }`}>
+                <Sparkles className={`w-5 h-5 ${readingMode === 'dark' ? "text-purple-400" : "text-purple-600"}`} />
+                あらすじ
+              </DialogTitle>
+              <DialogDescription className={readingMode === 'dark' ? "text-gray-400" : "text-amber-700"}>
+                {selectedBook?.title || ''} - {selectedBook?.author || ''}
+              </DialogDescription>
+            </DialogHeader>
+            <div className={`mt-4 p-4 rounded-lg ${
+              readingMode === 'dark' ? "bg-gray-900" : "bg-amber-50"
+            }`}>
+              {generateSummaryMutation.isPending ? (
+                <div className="flex flex-col items-center justify-center py-8">
+                  <Loader2 className={`w-8 h-8 animate-spin mb-4 ${
+                    readingMode === 'dark' ? "text-purple-400" : "text-purple-600"
+                  }`} />
+                  <p className={`text-sm ${readingMode === 'dark' ? "text-gray-400" : "text-muted-foreground"}`}>
+                    AIがあらすじを生成しています...
+                  </p>
+                  <p className={`text-xs mt-2 ${readingMode === 'dark' ? "text-gray-500" : "text-muted-foreground"}`}>
+                    これには数秒かかる場合があります
+                  </p>
+                </div>
+              ) : generateSummaryMutation.isError ? (
+                <div className="text-center py-8 text-red-500">
+                  <p>あらすじの生成に失敗しました</p>
+                  <p className="text-sm mt-2">{generateSummaryMutation.error?.message}</p>
+                  <Button
+                    variant="outline"
+                    className="mt-4"
+                    onClick={() => {
+                      setGeneratedSummary(null);
+                      generateSummaryMutation.mutate({
+                        id: selectedBook?.id || '',
+                        title: selectedBook?.title || textQuery.data?.id || '',
+                        author: selectedBook?.author || '不明',
+                        text: textQuery.data?.text || '',
+                      });
+                    }}
+                  >
+                    再試行
+                  </Button>
+                </div>
+              ) : generatedSummary ? (
+                <div 
+                  className={`leading-relaxed ${readingMode === 'dark' ? "text-gray-200" : "text-gray-800"}`}
+                  style={{
+                    fontFamily: "'Noto Serif JP', 'Yu Mincho', serif",
+                    fontSize: "16px",
+                    lineHeight: "1.8",
+                  }}
+                >
+                  {generatedSummary}
+                </div>
+              ) : null}
+            </div>
+            <div className="flex justify-end mt-4">
+              <Button
+                variant="outline"
+                onClick={() => setSummaryDialogOpen(false)}
+                className={readingMode === 'dark' 
+                  ? "border-gray-600 hover:bg-gray-700 text-gray-200" 
+                  : "border-amber-300 hover:bg-amber-100"
+                }
+              >
+                閉じる
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
       </div>
     );
   }
