@@ -4,6 +4,7 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Search, BookOpen, Loader2, ArrowLeft, ChevronLeft, ChevronRight, Minus, Plus, Type, Sun, Moon, Heart, Library, Check, Sparkles, X } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
 import { trpc } from '@/lib/trpc';
 import { useAuth } from '@/_core/hooks/useAuth';
 import { Link, useLocation, useSearch } from 'wouter';
@@ -643,40 +644,54 @@ export default function BooksPage() {
 
         {/* あらすじポップアップダイアログ */}
         <Dialog open={summaryDialogOpen} onOpenChange={setSummaryDialogOpen}>
-          <DialogContent className={`max-w-2xl ${
+          <DialogContent className={`max-w-4xl w-[90vw] max-h-[85vh] flex flex-col ${
             readingMode === 'dark' 
               ? "bg-gray-800 border-gray-700 text-gray-100" 
               : "bg-white border-amber-200"
           }`}>
-            <DialogHeader>
-              <DialogTitle className={`flex items-center gap-2 text-xl ${
-                readingMode === 'dark' ? "text-gray-100" : "text-amber-900"
-              }`}>
-                <Sparkles className={`w-5 h-5 ${readingMode === 'dark' ? "text-purple-400" : "text-purple-600"}`} />
-                あらすじ
-              </DialogTitle>
+            <DialogHeader className="flex-shrink-0">
+              <div className="flex items-center justify-between">
+                <DialogTitle className={`flex items-center gap-2 text-xl ${
+                  readingMode === 'dark' ? "text-gray-100" : "text-amber-900"
+                }`}>
+                  <Sparkles className={`w-5 h-5 ${readingMode === 'dark' ? "text-purple-400" : "text-purple-600"}`} />
+                  あらすじ
+                </DialogTitle>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setSummaryDialogOpen(false)}
+                  className={`rounded-full w-8 h-8 p-0 ${
+                    readingMode === 'dark' 
+                      ? "hover:bg-gray-700 text-gray-400" 
+                      : "hover:bg-gray-100 text-gray-500"
+                  }`}
+                >
+                  <X className="w-4 h-4" />
+                </Button>
+              </div>
               <DialogDescription className={readingMode === 'dark' ? "text-gray-400" : "text-amber-700"}>
                 {selectedBook?.title || ''} - {selectedBook?.author || ''}
               </DialogDescription>
             </DialogHeader>
-            <div className={`mt-4 p-4 rounded-lg ${
+            <div className={`flex-1 overflow-y-auto mt-4 p-6 rounded-lg ${
               readingMode === 'dark' ? "bg-gray-900" : "bg-amber-50"
             }`}>
               {generateSummaryMutation.isPending ? (
-                <div className="flex flex-col items-center justify-center py-8">
-                  <Loader2 className={`w-8 h-8 animate-spin mb-4 ${
+                <div className="flex flex-col items-center justify-center py-12">
+                  <Loader2 className={`w-10 h-10 animate-spin mb-4 ${
                     readingMode === 'dark' ? "text-purple-400" : "text-purple-600"
                   }`} />
-                  <p className={`text-sm ${readingMode === 'dark' ? "text-gray-400" : "text-muted-foreground"}`}>
+                  <p className={`text-base ${readingMode === 'dark' ? "text-gray-400" : "text-muted-foreground"}`}>
                     AIがあらすじを生成しています...
                   </p>
-                  <p className={`text-xs mt-2 ${readingMode === 'dark' ? "text-gray-500" : "text-muted-foreground"}`}>
+                  <p className={`text-sm mt-2 ${readingMode === 'dark' ? "text-gray-500" : "text-muted-foreground"}`}>
                     これには数秒かかる場合があります
                   </p>
                 </div>
               ) : generateSummaryMutation.isError ? (
-                <div className="text-center py-8 text-red-500">
-                  <p>あらすじの生成に失敗しました</p>
+                <div className="text-center py-12 text-red-500">
+                  <p className="text-lg">あらすじの生成に失敗しました</p>
                   <p className="text-sm mt-2">{generateSummaryMutation.error?.message}</p>
                   <Button
                     variant="outline"
@@ -696,18 +711,22 @@ export default function BooksPage() {
                 </div>
               ) : generatedSummary ? (
                 <div 
-                  className={`leading-relaxed ${readingMode === 'dark' ? "text-gray-200" : "text-gray-800"}`}
+                  className={`prose prose-lg max-w-none ${
+                    readingMode === 'dark' 
+                      ? "prose-invert prose-headings:text-gray-100 prose-p:text-gray-200 prose-strong:text-gray-100" 
+                      : "prose-headings:text-amber-900 prose-p:text-gray-800 prose-strong:text-amber-800"
+                  }`}
                   style={{
                     fontFamily: "'Noto Serif JP', 'Yu Mincho', serif",
-                    fontSize: "16px",
-                    lineHeight: "1.8",
+                    fontSize: "17px",
+                    lineHeight: "2",
                   }}
                 >
-                  {generatedSummary}
+                  <ReactMarkdown>{generatedSummary}</ReactMarkdown>
                 </div>
               ) : null}
             </div>
-            <div className="flex justify-end mt-4">
+            <div className="flex-shrink-0 flex justify-end gap-3 mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
               <Button
                 variant="outline"
                 onClick={() => setSummaryDialogOpen(false)}
