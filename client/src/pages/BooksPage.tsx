@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Search, BookOpen, Loader2, ArrowLeft, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Search, BookOpen, Loader2, ArrowLeft, ChevronLeft, ChevronRight, Minus, Plus, Type } from 'lucide-react';
 import { trpc } from '@/lib/trpc';
 
 interface BookItem {
@@ -14,11 +14,20 @@ interface BookItem {
   releaseDate: string;
 }
 
+// フォントサイズの設定
+const FONT_SIZES = [
+  { label: '小', value: 14 },
+  { label: '中', value: 18 },
+  { label: '大', value: 22 },
+  { label: '特大', value: 26 },
+];
+
 export default function BooksPage() {
   const [searchKeyword, setSearchKeyword] = useState('');
   const [debouncedKeyword, setDebouncedKeyword] = useState('');
   const [selectedBook, setSelectedBook] = useState<BookItem | null>(null);
   const [currentPage, setCurrentPage] = useState(0);
+  const [fontSize, setFontSize] = useState(18); // デフォルトは「中」サイズ
   const ITEMS_PER_PAGE = 20;
 
   // 検索クエリのデバウンス
@@ -59,12 +68,33 @@ export default function BooksPage() {
   const hasMore = debouncedKeyword ? (searchQuery.data?.hasMore || false) : false;
   const isLoading = debouncedKeyword ? searchQuery.isLoading : popularQuery.isLoading;
 
+  // フォントサイズを増減する関数
+  const increaseFontSize = () => {
+    const currentIndex = FONT_SIZES.findIndex(s => s.value === fontSize);
+    if (currentIndex < FONT_SIZES.length - 1) {
+      setFontSize(FONT_SIZES[currentIndex + 1].value);
+    }
+  };
+
+  const decreaseFontSize = () => {
+    const currentIndex = FONT_SIZES.findIndex(s => s.value === fontSize);
+    if (currentIndex > 0) {
+      setFontSize(FONT_SIZES[currentIndex - 1].value);
+    }
+  };
+
+  // 現在のフォントサイズラベルを取得
+  const getCurrentFontSizeLabel = () => {
+    const size = FONT_SIZES.find(s => s.value === fontSize);
+    return size?.label || '中';
+  };
+
   // 書籍詳細ビュー
   if (selectedBook) {
     return (
       <div className="min-h-screen bg-gradient-to-b from-amber-50 to-orange-50">
         <div className="sticky top-0 z-50 bg-amber-50/95 backdrop-blur border-b border-amber-200">
-          <div className="container mx-auto px-4 py-4">
+          <div className="container mx-auto px-4 py-4 flex items-center justify-between">
             <Button
               variant="outline"
               onClick={() => setSelectedBook(null)}
@@ -73,6 +103,32 @@ export default function BooksPage() {
               <ArrowLeft className="w-4 h-4 mr-2" />
               検索に戻る
             </Button>
+
+            {/* フォントサイズ調整コントロール */}
+            <div className="flex items-center gap-2 bg-white rounded-full px-3 py-1 border border-amber-200 shadow-sm">
+              <Type className="w-4 h-4 text-amber-600" />
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={decreaseFontSize}
+                disabled={fontSize === FONT_SIZES[0].value}
+                className="h-8 w-8 p-0 hover:bg-amber-100"
+              >
+                <Minus className="w-4 h-4" />
+              </Button>
+              <span className="text-sm font-medium text-amber-800 min-w-[3rem] text-center">
+                {getCurrentFontSizeLabel()}
+              </span>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={increaseFontSize}
+                disabled={fontSize === FONT_SIZES[FONT_SIZES.length - 1].value}
+                className="h-8 w-8 p-0 hover:bg-amber-100"
+              >
+                <Plus className="w-4 h-4" />
+              </Button>
+            </div>
           </div>
         </div>
 
@@ -106,6 +162,28 @@ export default function BooksPage() {
                       青空文庫で見る →
                     </a>
                   )}
+
+                  {/* フォントサイズ調整（サイドバー版） */}
+                  <div className="pt-4 border-t border-amber-200">
+                    <p className="text-sm text-muted-foreground mb-2">文字サイズ</p>
+                    <div className="flex gap-1">
+                      {FONT_SIZES.map((size) => (
+                        <Button
+                          key={size.value}
+                          variant={fontSize === size.value ? "default" : "outline"}
+                          size="sm"
+                          onClick={() => setFontSize(size.value)}
+                          className={`flex-1 text-xs ${
+                            fontSize === size.value 
+                              ? "bg-amber-600 hover:bg-amber-700" 
+                              : "border-amber-300 hover:bg-amber-100"
+                          }`}
+                        >
+                          {size.label}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
                 </CardContent>
               </Card>
             </div>
@@ -126,11 +204,13 @@ export default function BooksPage() {
                     </div>
                   ) : textQuery.data ? (
                     <div 
-                      className="prose prose-lg max-w-none text-amber-950"
+                      className="prose max-w-none"
                       style={{
                         fontFamily: "'Noto Serif JP', 'Yu Mincho', serif",
+                        fontSize: `${fontSize}px`,
                         lineHeight: "2",
                         whiteSpace: "pre-wrap",
+                        color: "#000000", // 黒色に変更
                       }}
                     >
                       {textQuery.data.text}
