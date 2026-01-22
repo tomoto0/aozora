@@ -1,89 +1,74 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Search, Book, Loader2, ArrowLeft } from 'lucide-react';
+import { Search, BookOpen, Loader2, ArrowLeft, ChevronLeft, ChevronRight } from 'lucide-react';
 import { trpc } from '@/lib/trpc';
 
 interface BookItem {
   id: string;
   title: string;
   author: string;
-  description?: string;
-  textFileUrl?: string;
-  characterCount?: number;
-  year?: number;
+  textUrl: string;
+  cardUrl: string;
+  releaseDate: string;
 }
 
 export default function BooksPage() {
   const [searchKeyword, setSearchKeyword] = useState('');
+  const [debouncedKeyword, setDebouncedKeyword] = useState('');
   const [selectedBook, setSelectedBook] = useState<BookItem | null>(null);
-  const [searchResults, setSearchResults] = useState<BookItem[]>([]);
-  const [textContent, setTextContent] = useState<string>('');
-  const [isSearching, setIsSearching] = useState(false);
-  const [isLoadingText, setIsLoadingText] = useState(false);
-  const [textError, setTextError] = useState<string>('');
+  const [currentPage, setCurrentPage] = useState(0);
+  const ITEMS_PER_PAGE = 20;
 
-  const utils = trpc.useUtils();
+  // 検索クエリのデバウンス
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedKeyword(searchKeyword);
+      setCurrentPage(0);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchKeyword]);
 
-  // 本の検索処理
-  const handleSearch = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const keyword = searchKeyword.trim();
-    
-    if (!keyword) {
-      setSearchResults([]);
-      return;
-    }
+  // 人気作品を取得（初期表示用）
+  const popularQuery = trpc.books.popular.useQuery(
+    { limit: 12 },
+    { enabled: !debouncedKeyword }
+  );
 
-    setIsSearching(true);
-    try {
-      const results = await utils.books.search.fetch({ query: keyword, limit: 50 });
-      setSearchResults(results as BookItem[]);
-    } catch (error) {
-      console.error('Search error:', error);
-      setSearchResults([]);
-    } finally {
-      setIsSearching(false);
-    }
-  };
+  // 検索結果を取得
+  const searchQuery = trpc.books.search.useQuery(
+    { 
+      query: debouncedKeyword, 
+      limit: ITEMS_PER_PAGE,
+      offset: currentPage * ITEMS_PER_PAGE
+    },
+    { enabled: !!debouncedKeyword }
+  );
 
-  // 本の選択処理
-  const handleBookSelect = async (book: BookItem) => {
-    setSelectedBook(book);
-    setTextContent('');
-    setTextError('');
-    setIsLoadingText(true);
+  // テキスト取得
+  const textQuery = trpc.books.getText.useQuery(
+    { id: selectedBook?.id || "", textUrl: selectedBook?.textUrl || "" },
+    { enabled: !!selectedBook }
+  );
 
-    try {
-      const result = await utils.books.getText.fetch({ id: book.id });
-      if (result && result.text) {
-        setTextContent(result.text);
-      } else {
-        setTextError('テキストの読み込みに失敗しました');
-      }
-    } catch (error) {
-      console.error('Text loading error:', error);
-      setTextError(`テキストの読み込みに失敗しました: ${error instanceof Error ? error.message : String(error)}`);
-    } finally {
-      setIsLoadingText(false);
-    }
-  };
+  // 表示するデータを決定
+  const displayData = debouncedKeyword ? searchQuery.data : popularQuery.data;
+  const books = displayData?.books || [];
+  const total = debouncedKeyword ? (searchQuery.data?.total || 0) : books.length;
+  const hasMore = debouncedKeyword ? (searchQuery.data?.hasMore || false) : false;
+  const isLoading = debouncedKeyword ? searchQuery.isLoading : popularQuery.isLoading;
 
+  // 書籍詳細ビュー
   if (selectedBook) {
-    // 本の読書ビュー
     return (
-      <div className="min-h-screen bg-background">
-        <div className="sticky top-0 z-50 bg-background border-b shadow-sm">
+      <div className="min-h-screen bg-gradient-to-b from-amber-50 to-orange-50">
+        <div className="sticky top-0 z-50 bg-amber-50/95 backdrop-blur border-b border-amber-200">
           <div className="container mx-auto px-4 py-4">
             <Button
               variant="outline"
-              onClick={() => {
-                setSelectedBook(null);
-                setTextContent('');
-                setTextError('');
-              }}
+              onClick={() => setSelectedBook(null)}
+              className="border-amber-300 hover:bg-amber-100"
             >
               <ArrowLeft className="w-4 h-4 mr-2" />
               検索に戻る
@@ -92,54 +77,65 @@ export default function BooksPage() {
         </div>
 
         <div className="container mx-auto px-4 py-6">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
             {/* 左側：書籍情報 */}
-            <div className="md:col-span-1">
-              <Card>
+            <div className="lg:col-span-1">
+              <Card className="sticky top-24 border-amber-200">
                 <CardHeader>
-                  <CardTitle className="text-lg">{selectedBook.title}</CardTitle>
-                  <CardDescription>{selectedBook.author}</CardDescription>
+                  <CardTitle className="text-xl text-amber-900">{selectedBook.title}</CardTitle>
+                  <CardDescription className="text-amber-700">{selectedBook.author}</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div>
-                    <p className="text-sm text-muted-foreground">出版年</p>
-                    <p className="font-semibold">{selectedBook.year || 'N/A'}</p>
+                    <p className="text-sm text-muted-foreground">公開日</p>
+                    <p className="font-semibold">{selectedBook.releaseDate || '不明'}</p>
                   </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">文字数</p>
-                    <p className="font-semibold">{selectedBook.characterCount?.toLocaleString() || 'N/A'}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">説明</p>
-                    <p className="text-sm mt-2">{selectedBook.description}</p>
-                  </div>
+                  {textQuery.data && (
+                    <div>
+                      <p className="text-sm text-muted-foreground">文字数</p>
+                      <p className="font-semibold">{textQuery.data.charCount.toLocaleString()}字</p>
+                    </div>
+                  )}
+                  {selectedBook.cardUrl && (
+                    <a
+                      href={selectedBook.cardUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-sm text-blue-600 hover:underline block mt-4"
+                    >
+                      青空文庫で見る →
+                    </a>
+                  )}
                 </CardContent>
               </Card>
             </div>
 
             {/* 右側：テキスト表示 */}
-            <div className="md:col-span-3">
-              <Card className="h-full">
-                <CardHeader>
-                  <CardTitle>{selectedBook.title}</CardTitle>
-                </CardHeader>
-                <CardContent className="h-96 overflow-y-auto">
-                  {isLoadingText ? (
-                    <div className="flex items-center justify-center h-full">
-                      <Loader2 className="w-8 h-8 animate-spin" />
+            <div className="lg:col-span-3">
+              <Card className="border-amber-200">
+                <CardContent className="p-8">
+                  {textQuery.isLoading ? (
+                    <div className="flex items-center justify-center py-20">
+                      <Loader2 className="w-8 h-8 animate-spin text-amber-600" />
+                      <span className="ml-3 text-muted-foreground">テキストを読み込み中...</span>
                     </div>
-                  ) : textError ? (
-                    <div className="text-red-500">
-                      <p>エラーが発生しました</p>
-                      <p className="text-sm">{textError}</p>
+                  ) : textQuery.error ? (
+                    <div className="text-center py-20 text-red-500">
+                      <p>テキストの読み込みに失敗しました</p>
+                      <p className="text-sm mt-2">{textQuery.error.message}</p>
                     </div>
-                  ) : textContent ? (
-                    <div className="whitespace-pre-wrap text-sm leading-relaxed">
-                      {textContent}
+                  ) : textQuery.data ? (
+                    <div 
+                      className="prose prose-lg max-w-none text-amber-950"
+                      style={{
+                        fontFamily: "'Noto Serif JP', 'Yu Mincho', serif",
+                        lineHeight: "2",
+                        whiteSpace: "pre-wrap",
+                      }}
+                    >
+                      {textQuery.data.text}
                     </div>
-                  ) : (
-                    <p>テキストを読み込み中...</p>
-                  )}
+                  ) : null}
                 </CardContent>
               </Card>
             </div>
@@ -151,82 +147,115 @@ export default function BooksPage() {
 
   // 書籍検索ビュー
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-gradient-to-b from-amber-50 to-orange-50">
       <div className="container mx-auto px-4 py-8">
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold mb-2">青空文庫の作品</h1>
-          <p className="text-muted-foreground">作品名や著者名で検索して、快適な読書体験を楽しみましょう</p>
+        {/* ヘッダー */}
+        <div className="text-center mb-12">
+          <h1 className="text-4xl font-bold text-amber-900 mb-4">
+            青空文庫リーダー
+          </h1>
+          <p className="text-amber-700 text-lg">
+            {total > 0 ? `${total.toLocaleString()}件の作品から検索` : "日本の名作を無料で読もう"}
+          </p>
         </div>
 
-        {/* 検索フォーム */}
-        <form onSubmit={handleSearch} className="mb-8">
-          <div className="flex gap-2">
+        {/* 検索バー */}
+        <div className="max-w-2xl mx-auto mb-12">
+          <div className="relative">
+            <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 text-amber-600 w-5 h-5" />
             <Input
+              type="text"
               placeholder="作品名や著者名で検索..."
               value={searchKeyword}
               onChange={(e) => setSearchKeyword(e.target.value)}
-              className="flex-1"
+              className="pl-12 pr-4 py-6 text-lg rounded-full border-amber-200 focus:border-amber-400 focus:ring-amber-400"
             />
-            <Button type="submit" disabled={isSearching}>
-              {isSearching ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  検索中...
-                </>
-              ) : (
-                <>
-                  <Search className="w-4 h-4 mr-2" />
-                  検索
-                </>
-              )}
-            </Button>
           </div>
-        </form>
+        </div>
+
+        {/* ローディング */}
+        {isLoading && (
+          <div className="flex items-center justify-center py-20">
+            <Loader2 className="w-8 h-8 animate-spin text-amber-600" />
+            <span className="ml-3 text-muted-foreground">検索中...</span>
+          </div>
+        )}
 
         {/* 検索結果 */}
-        {searchKeyword && (
-          <div className="mb-4">
-            <p className="text-sm text-muted-foreground">
-              「{searchKeyword}」の検索結果: {searchResults.length}件
+        {!isLoading && books.length > 0 && (
+          <>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+              {books.map((book) => (
+                <Card
+                  key={book.id}
+                  className="hover:shadow-lg transition-shadow cursor-pointer group border-amber-200"
+                  onClick={() => setSelectedBook(book)}
+                >
+                  <CardHeader>
+                    <CardTitle className="text-lg group-hover:text-amber-700 transition-colors line-clamp-2">
+                      {book.title}
+                    </CardTitle>
+                    <CardDescription>{book.author}</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <Button
+                      variant="outline"
+                      className="w-full group-hover:bg-amber-50 group-hover:border-amber-300"
+                    >
+                      <BookOpen className="w-4 h-4 mr-2" />
+                      読む
+                    </Button>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+
+            {/* ページネーション */}
+            {debouncedKeyword && total > ITEMS_PER_PAGE && (
+              <div className="flex items-center justify-center gap-4 mt-8">
+                <Button
+                  variant="outline"
+                  onClick={() => setCurrentPage(p => Math.max(0, p - 1))}
+                  disabled={currentPage === 0}
+                  className="border-amber-300"
+                >
+                  <ChevronLeft className="w-4 h-4 mr-1" />
+                  前へ
+                </Button>
+                <span className="text-muted-foreground">
+                  {currentPage + 1} / {Math.ceil(total / ITEMS_PER_PAGE)} ページ
+                </span>
+                <Button
+                  variant="outline"
+                  onClick={() => setCurrentPage(p => p + 1)}
+                  disabled={!hasMore}
+                  className="border-amber-300"
+                >
+                  次へ
+                  <ChevronRight className="w-4 h-4 ml-1" />
+                </Button>
+              </div>
+            )}
+          </>
+        )}
+
+        {/* 検索結果なし */}
+        {!isLoading && debouncedKeyword && books.length === 0 && (
+          <div className="text-center py-20">
+            <p className="text-muted-foreground text-lg">
+              「{debouncedKeyword}」に一致する作品が見つかりませんでした
             </p>
           </div>
         )}
 
-        {/* 書籍グリッド */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {searchResults.length > 0 ? (
-            searchResults.map((book) => (
-              <Card key={book.id} className="cursor-pointer hover:shadow-lg transition-shadow">
-                <CardHeader>
-                  <CardTitle className="text-lg line-clamp-2">{book.title}</CardTitle>
-                  <CardDescription>{book.author}</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="flex gap-2">
-                    <Badge variant="outline">{book.year}年</Badge>
-                    <Badge variant="outline">{book.characterCount?.toLocaleString()}字</Badge>
-                  </div>
-                  <p className="text-sm line-clamp-3">{book.description}</p>
-                  <Button
-                    className="w-full"
-                    onClick={() => handleBookSelect(book)}
-                  >
-                    <Book className="w-4 h-4 mr-2" />
-                    読む
-                  </Button>
-                </CardContent>
-              </Card>
-            ))
-          ) : searchKeyword ? (
-            <div className="col-span-full text-center py-12">
-              <p className="text-muted-foreground">検索結果がありません</p>
-            </div>
-          ) : (
-            <div className="col-span-full text-center py-12">
-              <p className="text-muted-foreground">作品を検索してください</p>
-            </div>
-          )}
-        </div>
+        {/* 初期表示（人気作品なし） */}
+        {!isLoading && !debouncedKeyword && books.length === 0 && (
+          <div className="text-center py-20">
+            <p className="text-muted-foreground text-lg">
+              作品を検索してください
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );

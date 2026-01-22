@@ -1,288 +1,357 @@
+import { COOKIE_NAME } from "@shared/const";
+import { getSessionCookieOptions } from "./_core/cookies";
+import { systemRouter } from "./_core/systemRouter";
+import { publicProcedure, router } from "./_core/trpc";
 import { z } from "zod";
-import { protectedProcedure, publicProcedure, router } from "./_core/trpc";
-import { notifyOwner } from "./_core/notification";
-import * as https from "https";
-import * as http from "http";
 import * as fs from "fs";
 import * as path from "path";
-import * as zlib from "zlib";
-import * as Encoding from "encoding-japanese";
-import { execSync } from "child_process";
-import iconv from "iconv-lite";
+import { exec } from "child_process";
+import { promisify } from "util";
+import * as iconv from "iconv-lite";
 
-// 青空文庫の書籍データ（実際のZIPファイルURL付き）
-const BOOKS_DATABASE = [
-  {
-    id: "000879",
-    title: "羅生門",
-    author: "芥川龍之介",
-    description: "京都羅生門の下で、老婆が死人の髪を抜いている場面に出くわした下人。",
-    year: 1915,
-    characterCount: 8000,
-    textFileUrl: "https://www.aozora.gr.jp/cards/000879/files/127_ruby_150.zip"
-  },
-  {
-    id: "000879-2",
-    title: "蜘蛛の糸",
-    author: "芥川龍之介",
-    description: "地獄の底で苦しむ犍陀多が、天上の蜘蛛の糸を見つけた。",
-    year: 1918,
-    characterCount: 5000,
-    textFileUrl: "https://www.aozora.gr.jp/cards/000879/files/128_ruby_150.zip"
-  },
-  {
-    id: "000879-3",
-    title: "杜子春",
-    author: "芥川龍之介",
-    description: "唐の時代、貧乏な杜子春が仙人に会い、不思議な体験をする。",
-    year: 1920,
-    characterCount: 12000,
-    textFileUrl: "https://www.aozora.gr.jp/cards/000879/files/129_ruby_150.zip"
-  },
-  {
-    id: "000879-4",
-    title: "地獄変",
-    author: "芥川龍之介",
-    description: "平安時代の絵師が、地獄の炎の中で娘を焼く場面を描く。",
-    year: 1918,
-    characterCount: 15000,
-    textFileUrl: "https://www.aozora.gr.jp/cards/000879/files/130_ruby_150.zip"
-  },
-  {
-    id: "000879-5",
-    title: "河童",
-    author: "芥川龍之介",
-    description: "河童の国へ迷い込んだ男の冒険と、その国の文化について。",
-    year: 1927,
-    characterCount: 20000,
-    textFileUrl: "https://www.aozora.gr.jp/cards/000879/files/131_ruby_150.zip"
-  },
-  {
-    id: "000879-6",
-    title: "トロッコ",
-    author: "芥川龍之介",
-    description: "少年が鉱山のトロッコに乗る冒険をする短編。",
-    year: 1922,
-    characterCount: 4000,
-    textFileUrl: "https://www.aozora.gr.jp/cards/000879/files/132_ruby_150.zip"
-  },
-  {
-    id: "000879-7",
-    title: "鼻",
-    author: "芥川龍之介",
-    description: "長い鼻を持つ和尚が、その鼻をめぐる悲喜劇。",
-    year: 1916,
-    characterCount: 6000,
-    textFileUrl: "https://www.aozora.gr.jp/cards/000879/files/133_ruby_150.zip"
-  },
-  {
-    id: "000879-8",
-    title: "芋粥",
-    author: "芥川龍之介",
-    description: "貴族の男が、夢の中で芋粥を食べる不思議な話。",
-    year: 1916,
-    characterCount: 7000,
-    textFileUrl: "https://www.aozora.gr.jp/cards/000879/files/134_ruby_150.zip"
-  }
-];
+const execAsync = promisify(exec);
 
-// 書籍検索関数
-function searchBooks(query: string): typeof BOOKS_DATABASE {
-  const lowerQuery = query.toLowerCase();
-  return BOOKS_DATABASE.filter(book =>
-    book.title.toLowerCase().includes(lowerQuery) ||
-    book.author.toLowerCase().includes(lowerQuery) ||
-    book.description.toLowerCase().includes(lowerQuery)
-  );
+// 青空文庫の書籍データを格納する型
+interface AozoraBook {
+  id: string;
+  title: string;
+  titleYomi: string;
+  author: string;
+  authorYomi: string;
+  textUrl: string;
+  cardUrl: string;
+  releaseDate: string;
 }
 
-// ファイルをダウンロードする関数
-function downloadFile(url: string): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const protocol = url.startsWith("https") ? https : http;
-    
-    const request = protocol.get(url, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-      }
-    }, (response) => {
-      if (response.statusCode === 301 || response.statusCode === 302) {
-        // リダイレクト対応
-        const redirectUrl = response.headers.location;
-        if (redirectUrl) {
-          downloadFile(redirectUrl).then(resolve).catch(reject);
-          return;
-        }
-      }
+// CSVデータをキャッシュする変数
+let cachedBooks: AozoraBook[] | null = null;
+let cacheTimestamp: number = 0;
+const CACHE_DURATION = 24 * 60 * 60 * 1000; // 24時間
 
-      if (response.statusCode !== 200) {
-        reject(new Error(`Failed to download: ${response.statusCode}`));
-        return;
-      }
+// CSVファイルのパス
+const CSV_DIR = "/tmp/aozora_data";
+const CSV_FILE = path.join(CSV_DIR, "list_person_all_extended_utf8.csv");
+const ZIP_URL = "https://www.aozora.gr.jp/index_pages/list_person_all_extended_utf8.zip";
 
-      const chunks: Buffer[] = [];
-      response.on("data", (chunk: Buffer) => {
-        chunks.push(chunk);
-      });
-
-      response.on("end", () => {
-        resolve(Buffer.concat(chunks));
-      });
-
-      response.on("error", reject);
-    });
-
-    request.on("error", reject);
-    request.setTimeout(30000, () => {
-      request.destroy();
-      reject(new Error("Download timeout"));
-    });
-  });
-}
-
-// ZIPファイルからテキストを抽出する関数（簡易版）
-async function extractTextFromZip(zipUrl: string): Promise<string> {
-  const maxRetries = 3;
-  let lastError: Error | null = null;
-
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      console.log(`[extractTextFromZip] Downloading ZIP from: ${zipUrl} (attempt ${attempt}/${maxRetries})`);
-
-      // ZIPファイルをダウンロード
-      const zipBuffer = await downloadFile(zipUrl);
-      console.log(`[extractTextFromZip] Downloaded ${zipBuffer.length} bytes`);
-
-      // 一時ファイルに保存
-      const tempZipPath = path.join("/tmp", `book_${Date.now()}_${Math.random()}.zip`);
-      fs.writeFileSync(tempZipPath, zipBuffer);
-      console.log(`[extractTextFromZip] Saved to: ${tempZipPath}`);
-
-      // unzip コマンドで解凍
-      const tempDir = path.join("/tmp", `book_${Date.now()}_${Math.random()}`);
-      fs.mkdirSync(tempDir, { recursive: true });
-
-      try {
-        execSync(`unzip -q "${tempZipPath}" -d "${tempDir}"`, { stdio: "pipe" });
-      } catch (e) {
-        console.error("[extractTextFromZip] unzip failed:", e);
-        throw new Error("Failed to unzip file");
-      }
-
-      // テキストファイルを探す
-      const files = fs.readdirSync(tempDir);
-      let textContent = "";
-      let foundFile = false;
-
-      for (const file of files) {
-        if (file.endsWith(".txt")) {
-          console.log(`[extractTextFromZip] Found text file: ${file}`);
-          foundFile = true;
-          
-          const filePath = path.join(tempDir, file);
-          const buffer = fs.readFileSync(filePath);
-          
-          // Shift-JIS をUTF-8に変換
-          try {
-            // iconv-liteを使用してShift-JISをUTF-8に変換
-            textContent = iconv.decode(buffer, "shift_jis");
-            console.log(`[extractTextFromZip] Successfully decoded from Shift-JIS`);
-            console.log(`[extractTextFromZip] Text content length: ${textContent.length}`);
-          } catch (decodeError) {
-            console.error(`[extractTextFromZip] Decode error:`, decodeError);
-            // フォールバック: UTF-8として解釈
-            textContent = buffer.toString("utf-8");
-          }
-          
-          break;
-        }
-      }
-
-      // クリーンアップ
-      try {
-        execSync(`rm -rf "${tempDir}" "${tempZipPath}"`, { stdio: "pipe" });
-      } catch (e) {
-        // 無視
-      }
-
-      if (!foundFile) {
-        throw new Error("No text file found in ZIP");
-      }
-
-      if (!textContent) {
-        throw new Error("Failed to extract text content");
-      }
-
-      return textContent;
-    } catch (error) {
-      lastError = error instanceof Error ? error : new Error(String(error));
-      console.error(`[extractTextFromZip] Error (attempt ${attempt}/${maxRetries}):`, lastError);
-
-      if (attempt < maxRetries) {
-        await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
-        continue;
-      }
-    }
-  }
-
-  throw lastError || new Error("Failed to extract text from ZIP after retries");
-}
-
-// 書籍のテキストを取得する関数
-async function getBookText(bookId: string): Promise<{ text: string }> {
+// CSVファイルをダウンロードして解凍する関数
+async function downloadAndExtractCSV(): Promise<void> {
   try {
-    const book = BOOKS_DATABASE.find(b => b.id === bookId);
-    if (!book) {
-      throw new Error("Book not found");
+    // ディレクトリを作成
+    if (!fs.existsSync(CSV_DIR)) {
+      fs.mkdirSync(CSV_DIR, { recursive: true });
     }
 
-    console.log(`[getBookText] Fetching text for book: ${book.title}`);
-    const text = await extractTextFromZip(book.textFileUrl);
-    return { text };
+    const zipPath = path.join(CSV_DIR, "aozora_list.zip");
+    
+    // ZIPファイルをダウンロード
+    console.log("[Aozora] Downloading CSV from:", ZIP_URL);
+    await execAsync(`curl -s "${ZIP_URL}" -o "${zipPath}"`);
+    
+    // 解凍
+    console.log("[Aozora] Extracting CSV...");
+    await execAsync(`cd "${CSV_DIR}" && unzip -o "${zipPath}"`);
+    
+    console.log("[Aozora] CSV downloaded and extracted successfully");
   } catch (error) {
-    console.error("[getBookText] Error:", error);
-    throw new Error(`Failed to get book text: ${error instanceof Error ? error.message : String(error)}`);
+    console.error("[Aozora] Failed to download CSV:", error);
+    throw error;
+  }
+}
+
+// CSVファイルを解析する関数
+function parseCSV(content: string): AozoraBook[] {
+  const lines = content.split("\n");
+  const books: AozoraBook[] = [];
+  const seen = new Set<string>();
+
+  // ヘッダー行をスキップ
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+
+    // CSVパース（ダブルクォートを考慮）
+    const fields: string[] = [];
+    let field = "";
+    let inQuotes = false;
+    
+    for (let j = 0; j < line.length; j++) {
+      const char = line[j];
+      if (char === '"') {
+        inQuotes = !inQuotes;
+      } else if (char === "," && !inQuotes) {
+        fields.push(field);
+        field = "";
+      } else {
+        field += char;
+      }
+    }
+    fields.push(field);
+
+    // 必要なフィールドを抽出
+    // 0: 作品ID, 1: 作品名, 2: 作品名読み, 15: 姓, 16: 名, 17: 姓読み, 18: 名読み
+    // 43: テキストファイルURL, 13: 図書カードURL, 11: 公開日
+    const bookId = fields[0]?.replace(/"/g, "");
+    const title = fields[1]?.replace(/"/g, "");
+    const titleYomi = fields[2]?.replace(/"/g, "");
+    const lastName = fields[15]?.replace(/"/g, "") || "";
+    const firstName = fields[16]?.replace(/"/g, "") || "";
+    const lastNameYomi = fields[17]?.replace(/"/g, "") || "";
+    const firstNameYomi = fields[18]?.replace(/"/g, "") || "";
+    const textUrl = fields[45]?.replace(/"/g, "") || "";
+    const cardUrl = fields[13]?.replace(/"/g, "") || "";
+    const releaseDate = fields[11]?.replace(/"/g, "") || "";
+
+    // 重複チェック（同じ作品IDは1回だけ追加）
+    if (bookId && title && textUrl && !seen.has(bookId)) {
+      seen.add(bookId);
+      books.push({
+        id: bookId,
+        title: title,
+        titleYomi: titleYomi || "",
+        author: `${lastName}${firstName}`.trim() || "不明",
+        authorYomi: `${lastNameYomi}${firstNameYomi}`.trim() || "",
+        textUrl: textUrl,
+        cardUrl: cardUrl,
+        releaseDate: releaseDate,
+      });
+    }
+  }
+
+  return books;
+}
+
+// 青空文庫のデータを取得する関数
+async function getAozoraBooks(): Promise<AozoraBook[]> {
+  const now = Date.now();
+
+  // キャッシュが有効な場合はキャッシュを返す
+  if (cachedBooks && (now - cacheTimestamp) < CACHE_DURATION) {
+    return cachedBooks;
+  }
+
+  // CSVファイルが存在しない場合はダウンロード
+  if (!fs.existsSync(CSV_FILE)) {
+    await downloadAndExtractCSV();
+  }
+
+  // CSVファイルを読み込む
+  const content = fs.readFileSync(CSV_FILE, "utf-8");
+  cachedBooks = parseCSV(content);
+  cacheTimestamp = now;
+
+  console.log(`[Aozora] Loaded ${cachedBooks.length} books from CSV`);
+  return cachedBooks;
+}
+
+// ZIPファイルからテキストを抽出する関数
+async function extractTextFromZip(zipUrl: string): Promise<string> {
+  const tempDir = `/tmp/aozora_${Date.now()}`;
+  
+  try {
+    // 一時ディレクトリを作成
+    fs.mkdirSync(tempDir, { recursive: true });
+    
+    const zipPath = path.join(tempDir, "book.zip");
+    
+    // ZIPファイルをダウンロード
+    console.log("[Aozora] Downloading ZIP from:", zipUrl);
+    const { stderr } = await execAsync(
+      `curl -s -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" "${zipUrl}" -o "${zipPath}"`,
+      { timeout: 30000 }
+    );
+    
+    if (stderr) {
+      console.error("[Aozora] curl stderr:", stderr);
+    }
+    
+    // ファイルサイズを確認
+    const stats = fs.statSync(zipPath);
+    if (stats.size < 100) {
+      throw new Error(`Downloaded file is too small: ${stats.size} bytes`);
+    }
+    
+    // ZIPファイルを解凍
+    console.log("[Aozora] Extracting ZIP...");
+    await execAsync(`cd "${tempDir}" && unzip -o "${zipPath}"`, { timeout: 10000 });
+    
+    // テキストファイルを探す
+    const files = fs.readdirSync(tempDir);
+    const txtFile = files.find(f => f.endsWith(".txt"));
+    
+    if (!txtFile) {
+      throw new Error("No text file found in ZIP");
+    }
+    
+    // テキストファイルを読み込む（バイナリとして）
+    const txtPath = path.join(tempDir, txtFile);
+    const buffer = fs.readFileSync(txtPath);
+    
+    // Shift-JISからUTF-8に変換
+    const text = iconv.decode(buffer, "Shift_JIS");
+    
+    console.log("[Aozora] Text extracted successfully, length:", text.length);
+    return text;
+    
+  } finally {
+    // 一時ディレクトリを削除
+    try {
+      await execAsync(`rm -rf "${tempDir}"`);
+    } catch (e) {
+      console.error("[Aozora] Failed to cleanup temp dir:", e);
+    }
   }
 }
 
 export const appRouter = router({
-  books: router({
-    search: publicProcedure
-      .input(z.object({ query: z.string().optional(), limit: z.number().optional() }))
-      .query(async ({ input }) => {
-        if (!input.query || input.query.trim() === "") {
-          return [];
-        }
-        const results = searchBooks(input.query);
-        return results;
-      }),
-    getText: publicProcedure
-      .input(z.object({ id: z.string() }))
-      .query(async ({ input }) => {
-        return await getBookText(input.id);
-      }),
-  }),
-
-  system: router({
-    notifyOwner: protectedProcedure
-      .input(z.object({ title: z.string(), content: z.string() }))
-      .mutation(async ({ input }) => {
-        const success = await notifyOwner(input);
-        return { success };
-      }),
-  }),
-
+  system: systemRouter,
   auth: router({
     me: publicProcedure.query(opts => opts.ctx.user),
     logout: publicProcedure.mutation(({ ctx }) => {
-      const { COOKIE_NAME } = require("@shared/const");
-      const { getSessionCookieOptions } = require("./_core/cookies");
       const cookieOptions = getSessionCookieOptions(ctx.req);
       ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
       return {
         success: true,
       } as const;
     }),
+  }),
+
+  // 青空文庫の書籍検索・取得ルーター
+  books: router({
+    // 書籍検索
+    search: publicProcedure
+      .input(z.object({
+        query: z.string().optional(),
+        limit: z.number().min(1).max(100).default(20),
+        offset: z.number().min(0).default(0),
+      }))
+      .query(async ({ input }) => {
+        const { query, limit, offset } = input;
+        
+        try {
+          const allBooks = await getAozoraBooks();
+          
+          let filteredBooks = allBooks;
+          
+          // 検索クエリがある場合はフィルタリング
+          if (query && query.trim()) {
+            const searchTerm = query.toLowerCase().trim();
+            filteredBooks = allBooks.filter(book => 
+              book.title.toLowerCase().includes(searchTerm) ||
+              book.titleYomi.toLowerCase().includes(searchTerm) ||
+              book.author.toLowerCase().includes(searchTerm) ||
+              book.authorYomi.toLowerCase().includes(searchTerm)
+            );
+          }
+          
+          // ページネーション
+          const paginatedBooks = filteredBooks.slice(offset, offset + limit);
+          
+          return {
+            books: paginatedBooks.map(book => ({
+              id: book.id,
+              title: book.title,
+              author: book.author,
+              textUrl: book.textUrl,
+              cardUrl: book.cardUrl,
+              releaseDate: book.releaseDate,
+            })),
+            total: filteredBooks.length,
+            hasMore: offset + limit < filteredBooks.length,
+          };
+        } catch (error) {
+          console.error("[Aozora] Search error:", error);
+          throw new Error("Failed to search books");
+        }
+      }),
+
+    // 書籍テキスト取得
+    getText: publicProcedure
+      .input(z.object({
+        id: z.string(),
+        textUrl: z.string(),
+      }))
+      .query(async ({ input }) => {
+        const { id, textUrl } = input;
+        
+        try {
+          console.log(`[Aozora] Getting text for book ${id} from ${textUrl}`);
+          
+          if (!textUrl) {
+            throw new Error("No text URL provided");
+          }
+          
+          const text = await extractTextFromZip(textUrl);
+          
+          return {
+            id,
+            text,
+            charCount: text.length,
+          };
+        } catch (error) {
+          console.error("[Aozora] getText error:", error);
+          throw new Error(`Failed to get book text: ${error instanceof Error ? error.message : "Unknown error"}`);
+        }
+      }),
+
+    // 人気作品を取得（初期表示用）
+    popular: publicProcedure
+      .input(z.object({
+        limit: z.number().min(1).max(50).default(12),
+      }))
+      .query(async ({ input }) => {
+        const { limit } = input;
+        
+        try {
+          const allBooks = await getAozoraBooks();
+          
+          // 有名な著者の作品を優先的に表示
+          const famousAuthors = [
+            "芥川龍之介", "夏目漱石", "太宰治", "宮沢賢治", "森鷗外",
+            "川端康成", "三島由紀夫", "谷崎潤一郎", "志賀直哉", "島崎藤村",
+            "樋口一葉", "与謝野晶子", "正岡子規", "石川啄木", "中島敦",
+            "坂口安吾", "織田作之助", "梶井基次郎", "堀辰雄", "横光利一"
+          ];
+          
+          const popularBooks: AozoraBook[] = [];
+          const seen = new Set<string>();
+          
+          // 有名著者の作品を追加
+          for (const author of famousAuthors) {
+            const authorBooks = allBooks.filter(b => b.author === author);
+            for (const book of authorBooks) {
+              if (!seen.has(book.id) && popularBooks.length < limit) {
+                seen.add(book.id);
+                popularBooks.push(book);
+              }
+            }
+            if (popularBooks.length >= limit) break;
+          }
+          
+          // 足りない場合は残りを追加
+          if (popularBooks.length < limit) {
+            for (const book of allBooks) {
+              if (!seen.has(book.id) && popularBooks.length < limit) {
+                seen.add(book.id);
+                popularBooks.push(book);
+              }
+            }
+          }
+          
+          return {
+            books: popularBooks.map(book => ({
+              id: book.id,
+              title: book.title,
+              author: book.author,
+              textUrl: book.textUrl,
+              cardUrl: book.cardUrl,
+              releaseDate: book.releaseDate,
+            })),
+          };
+        } catch (error) {
+          console.error("[Aozora] popular error:", error);
+          throw new Error("Failed to get popular books");
+        }
+      }),
   }),
 });
 
