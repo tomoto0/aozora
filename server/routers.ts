@@ -58,65 +58,99 @@ async function downloadAndExtractCSV(): Promise<void> {
   }
 }
 
+// CSVの1行をパースする関数（ダブルクォートを考慮）
+function parseCSVLine(line: string): string[] {
+  const fields: string[] = [];
+  let field = "";
+  let inQuotes = false;
+  
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    if (char === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        // エスケープされたダブルクォート
+        field += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (char === "," && !inQuotes) {
+      fields.push(field);
+      field = "";
+    } else {
+      field += char;
+    }
+  }
+  fields.push(field);
+  
+  return fields;
+}
+
 // CSVファイルを解析する関数
 function parseCSV(content: string): AozoraBook[] {
   const lines = content.split("\n");
   const books: AozoraBook[] = [];
   const seen = new Set<string>();
 
+  console.log("[Aozora] Parsing CSV, total lines:", lines.length);
+
   // ヘッダー行をスキップ
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i].trim();
     if (!line) continue;
 
-    // CSVパース（ダブルクォートを考慮）
-    const fields: string[] = [];
-    let field = "";
-    let inQuotes = false;
-    
-    for (let j = 0; j < line.length; j++) {
-      const char = line[j];
-      if (char === '"') {
-        inQuotes = !inQuotes;
-      } else if (char === "," && !inQuotes) {
-        fields.push(field);
-        field = "";
-      } else {
-        field += char;
+    try {
+      const fields = parseCSVLine(line);
+
+      // CSVフィールドインデックス（0-indexed）:
+      // 0: 作品ID, 1: 作品名, 2: 作品名読み
+      // 11: 公開日, 13: 図書カードURL
+      // 15: 姓, 16: 名, 17: 姓読み, 18: 名読み
+      // 45: テキストファイルURL
+      const bookId = fields[0]?.replace(/"/g, "").trim();
+      const title = fields[1]?.replace(/"/g, "").trim();
+      const titleYomi = fields[2]?.replace(/"/g, "").trim() || "";
+      const releaseDate = fields[11]?.replace(/"/g, "").trim() || "";
+      const cardUrl = fields[13]?.replace(/"/g, "").trim() || "";
+      const lastName = fields[15]?.replace(/"/g, "").trim() || "";
+      const firstName = fields[16]?.replace(/"/g, "").trim() || "";
+      const lastNameYomi = fields[17]?.replace(/"/g, "").trim() || "";
+      const firstNameYomi = fields[18]?.replace(/"/g, "").trim() || "";
+      const textUrl = fields[45]?.replace(/"/g, "").trim() || "";
+
+      // 必須フィールドの検証
+      if (!bookId || !title) {
+        continue;
       }
-    }
-    fields.push(field);
 
-    // 必要なフィールドを抽出
-    // 0: 作品ID, 1: 作品名, 2: 作品名読み, 15: 姓, 16: 名, 17: 姓読み, 18: 名読み
-    // 43: テキストファイルURL, 13: 図書カードURL, 11: 公開日
-    const bookId = fields[0]?.replace(/"/g, "");
-    const title = fields[1]?.replace(/"/g, "");
-    const titleYomi = fields[2]?.replace(/"/g, "");
-    const lastName = fields[15]?.replace(/"/g, "") || "";
-    const firstName = fields[16]?.replace(/"/g, "") || "";
-    const lastNameYomi = fields[17]?.replace(/"/g, "") || "";
-    const firstNameYomi = fields[18]?.replace(/"/g, "") || "";
-    const textUrl = fields[45]?.replace(/"/g, "") || "";
-    const cardUrl = fields[13]?.replace(/"/g, "") || "";
-    const releaseDate = fields[11]?.replace(/"/g, "") || "";
+      // テキストURLがない場合はスキップ
+      if (!textUrl || !textUrl.startsWith("http")) {
+        continue;
+      }
 
-    // 重複チェック（同じ作品IDは1回だけ追加）
-    if (bookId && title && textUrl && !seen.has(bookId)) {
+      // 重複チェック（同じ作品IDは1回だけ追加）
+      if (seen.has(bookId)) {
+        continue;
+      }
+
       seen.add(bookId);
       books.push({
         id: bookId,
         title: title,
-        titleYomi: titleYomi || "",
+        titleYomi: titleYomi,
         author: `${lastName}${firstName}`.trim() || "不明",
         authorYomi: `${lastNameYomi}${firstNameYomi}`.trim() || "",
         textUrl: textUrl,
         cardUrl: cardUrl,
         releaseDate: releaseDate,
       });
+    } catch (e) {
+      // パースエラーは無視して続行
+      continue;
     }
   }
 
+  console.log("[Aozora] Parsed books count:", books.length);
   return books;
 }
 
@@ -126,15 +160,18 @@ async function getAozoraBooks(): Promise<AozoraBook[]> {
 
   // キャッシュが有効な場合はキャッシュを返す
   if (cachedBooks && (now - cacheTimestamp) < CACHE_DURATION) {
+    console.log("[Aozora] Returning cached books:", cachedBooks.length);
     return cachedBooks;
   }
 
   // CSVファイルが存在しない場合はダウンロード
   if (!fs.existsSync(CSV_FILE)) {
+    console.log("[Aozora] CSV file not found, downloading...");
     await downloadAndExtractCSV();
   }
 
   // CSVファイルを読み込む
+  console.log("[Aozora] Reading CSV file:", CSV_FILE);
   const content = fs.readFileSync(CSV_FILE, "utf-8");
   cachedBooks = parseCSV(content);
   cacheTimestamp = now;
@@ -228,7 +265,9 @@ export const appRouter = router({
         const { query, limit, offset } = input;
         
         try {
+          console.log("[Aozora] Search request:", { query, limit, offset });
           const allBooks = await getAozoraBooks();
+          console.log("[Aozora] Total books available:", allBooks.length);
           
           let filteredBooks = allBooks;
           
@@ -241,6 +280,7 @@ export const appRouter = router({
               book.author.toLowerCase().includes(searchTerm) ||
               book.authorYomi.toLowerCase().includes(searchTerm)
             );
+            console.log("[Aozora] Filtered books count:", filteredBooks.length);
           }
           
           // ページネーション
@@ -260,7 +300,7 @@ export const appRouter = router({
           };
         } catch (error) {
           console.error("[Aozora] Search error:", error);
-          throw new Error("Failed to search books");
+          throw new Error(`Failed to search books: ${error instanceof Error ? error.message : "Unknown error"}`);
         }
       }),
 
@@ -302,6 +342,7 @@ export const appRouter = router({
         const { limit } = input;
         
         try {
+          console.log("[Aozora] Getting popular books, limit:", limit);
           const allBooks = await getAozoraBooks();
           
           // 有名な著者の作品を優先的に表示
@@ -337,6 +378,8 @@ export const appRouter = router({
             }
           }
           
+          console.log("[Aozora] Returning popular books:", popularBooks.length);
+          
           return {
             books: popularBooks.map(book => ({
               id: book.id,
@@ -349,7 +392,7 @@ export const appRouter = router({
           };
         } catch (error) {
           console.error("[Aozora] popular error:", error);
-          throw new Error("Failed to get popular books");
+          throw new Error(`Failed to get popular books: ${error instanceof Error ? error.message : "Unknown error"}`);
         }
       }),
   }),
