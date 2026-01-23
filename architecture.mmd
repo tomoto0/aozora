@@ -1,0 +1,63 @@
+graph TB
+    subgraph Client["クライアント (React + TypeScript)"]
+        Home["Home.tsx<br/>ホームページ"]
+        Books["Books.tsx<br/>書籍検索"]
+        BookText["BookText.tsx<br/>テキスト表示"]
+        Bookshelf["Bookshelf.tsx<br/>本棚"]
+        TRPCClient["tRPC Client<br/>型安全なAPI通信"]
+    end
+
+    subgraph Server["サーバー (Express + tRPC)"]
+        BooksRouter["books.ts<br/>書籍検索・テキスト取得"]
+        BookshelfRouter["bookshelf.ts<br/>本棚管理"]
+        ProgressRouter["progress.ts<br/>読書進捗管理"]
+        SummaryRouter["summary.ts<br/>AI要約生成"]
+        AuthRouter["auth.ts<br/>認証"]
+        DrizzleORM["Drizzle ORM<br/>データベース抽象化"]
+    end
+
+    subgraph External["外部サービス"]
+        AozoraAPI["青空文庫API<br/>CSV検索・ZIPダウンロード<br/>Shift-JIS変換"]
+        ManusLLM["Manus LLM API<br/>あらすじ生成"]
+        ManusOAuth["Manus OAuth<br/>ユーザー認証"]
+        Database["MySQL/TiDB<br/>users, bookshelf,<br/>reading_progress"]
+    end
+
+    Home --> TRPCClient
+    Books --> TRPCClient
+    BookText --> TRPCClient
+    Bookshelf --> TRPCClient
+
+    TRPCClient --> BooksRouter
+    TRPCClient --> BookshelfRouter
+    TRPCClient --> ProgressRouter
+    TRPCClient --> SummaryRouter
+    TRPCClient --> AuthRouter
+
+    BooksRouter --> AozoraAPI
+    BooksRouter --> DrizzleORM
+    BookshelfRouter --> DrizzleORM
+    ProgressRouter --> DrizzleORM
+    SummaryRouter --> ManusLLM
+    AuthRouter --> ManusOAuth
+
+    DrizzleORM --> Database
+
+    style Client fill:#E3F2FD
+    style Server fill:#FFF3E0
+    style External fill:#F3E5F5
+    style Home fill:#90CAF9
+    style Books fill:#90CAF9
+    style BookText fill:#90CAF9
+    style Bookshelf fill:#90CAF9
+    style TRPCClient fill:#64B5F6
+    style BooksRouter fill:#FFB74D
+    style BookshelfRouter fill:#FFB74D
+    style ProgressRouter fill:#FFB74D
+    style SummaryRouter fill:#FFB74D
+    style AuthRouter fill:#FFB74D
+    style DrizzleORM fill:#FF9800
+    style AozoraAPI fill:#CE93D8
+    style ManusLLM fill:#CE93D8
+    style ManusOAuth fill:#CE93D8
+    style Database fill:#BA68C8
