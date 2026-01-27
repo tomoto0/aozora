@@ -96,3 +96,6 @@
 ## README.md作成
 - [x] README.mdの内容を設計してファイルを作成する
 - [x] アーキテクチャ図を生成してREADME.mdに統合する
+
+## README.mdへのOGP画像追加
+- [x] README.mdにOGP画像を追加する
